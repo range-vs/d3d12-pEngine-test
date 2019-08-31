@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "../math_graphics/math_graphics/mathematics.h"
+#include "math_graphics/math_graphics/mathematics.h"
 using namespace gmath;
 
 using namespace std;

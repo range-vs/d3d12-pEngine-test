@@ -22,7 +22,7 @@
 #include "PSOLoader.h"
 #include "types.h"
 
-#include "../pSound/sound.h"
+#include "pSound/sound.h"
 
 using namespace std;
 using Microsoft::WRL::ComPtr;

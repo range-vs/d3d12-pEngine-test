@@ -1,0 +1,81 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="vector">
+      <UniqueIdentifier>{7862c523-508e-4d78-bb93-b00e66defff3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="main">
+      <UniqueIdentifier>{59eae8a1-761f-425d-b091-bbe5e1e5e746}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="exception">
+      <UniqueIdentifier>{6ca58283-7ab0-480c-81e5-ee0f5f4a7b10}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="matrix">
+      <UniqueIdentifier>{0efc67cf-6f62-44d9-8f97-7bcc955b26cd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="other">
+      <UniqueIdentifier>{d698d17f-1e40-4e6c-911f-cb86c7abf7e3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="planes">
+      <UniqueIdentifier>{8b95aa6b-1224-4862-8a4b-e4aaff54439b}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Vector.h">
+      <Filter>vector</Filter>
+    </ClInclude>
+    <ClInclude Include="Vector2.h">
+      <Filter>vector</Filter>
+    </ClInclude>
+    <ClInclude Include="Vector3.h">
+      <Filter>vector</Filter>
+    </ClInclude>
+    <ClInclude Include="MathExcep.h">
+      <Filter>exception</Filter>
+    </ClInclude>
+    <ClInclude Include="Vector4.h">
+      <Filter>vector</Filter>
+    </ClInclude>
+    <ClInclude Include="Matrix.h">
+      <Filter>matrix</Filter>
+    </ClInclude>
+    <ClInclude Include="Matrix2.h">
+      <Filter>matrix</Filter>
+    </ClInclude>
+    <ClInclude Include="mathematics_typedef_vector.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="mathematics_typedefs_matrix.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="mathematics.h">
+      <Filter>main</Filter>
+    </ClInclude>
+    <ClInclude Include="Matrix3.h">
+      <Filter>matrix</Filter>
+    </ClInclude>
+    <ClInclude Include="Matrix4.h">
+      <Filter>matrix</Filter>
+    </ClInclude>
+    <ClInclude Include="other_types.h">
+      <Filter>other</Filter>
+    </ClInclude>
+    <ClInclude Include="Common.h">
+      <Filter>other</Filter>
+    </ClInclude>
+    <ClInclude Include="Plane3.h">
+      <Filter>planes</Filter>
+    </ClInclude>
+    <ClInclude Include="mathematics_typedef_planes.h">
+      <Filter>main</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Common.cpp">
+      <Filter>other</Filter>
+    </ClCompile>
+    <ClCompile Include="Plane3.cpp">
+      <Filter>planes</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>
