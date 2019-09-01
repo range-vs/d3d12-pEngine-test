@@ -28,5 +28,7 @@ struct BlankModel
 	vector<Vertex> vertexs;
 	wstring material;
 	wstring psoName;
+	wstring textureName;
+	wstring nameModel;
 
 };

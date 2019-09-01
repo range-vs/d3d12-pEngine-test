@@ -22,6 +22,8 @@
 #include "PSOLoader.h"
 #include "types.h"
 
+#include "DDSTextureLoader.h"
+
 #include "pSound/sound.h"
 
 using namespace std;
@@ -368,6 +370,121 @@ public:
 
 };
 
+class Texture
+{
+	ComPtr<ID3D12Resource> texture;
+	ComPtr<ID3D12Resource> textureUploadHeap;
+	size_t indexSrvHeap;
+public:
+	bool loadTexture(ComPtr<ID3D12Device>& device, ComPtr<ID3D12GraphicsCommandList>& cmdList, const wstring& filename)
+	{
+		if (FAILED(DirectX::CreateDDSTextureFromFile12(device.Get(),
+			cmdList.Get(), filename.c_str(),
+			texture, textureUploadHeap)))
+			return false;
+		return true;
+	}
+	ComPtr<ID3D12Resource>& getTexture() { return texture; }
+	ComPtr<ID3D12Resource>& getTextureUploadHeap() { return textureUploadHeap; }
+	void setIndexSrvHeap(size_t index) { indexSrvHeap = index; }
+	size_t& getIndexSrvHeap() { return indexSrvHeap; }
+};
+
+class ContainerTextures
+{
+	map<wstring, Texture> textures;
+	size_t count;
+
+public:
+	ContainerTextures():count(0){}
+
+	static array<const CD3DX12_STATIC_SAMPLER_DESC, 6> getStaticSamplers()
+	{
+		// Applications usually only need a handful of samplers.  So just define them all up front
+		// and keep them available as part of the root signature.  
+
+		const CD3DX12_STATIC_SAMPLER_DESC pointWrap(
+			0, // shaderRegister
+			D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+		const CD3DX12_STATIC_SAMPLER_DESC pointClamp(
+			1, // shaderRegister
+			D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP); // addressW
+
+		const CD3DX12_STATIC_SAMPLER_DESC linearWrap(
+			2, // shaderRegister
+			D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+		const CD3DX12_STATIC_SAMPLER_DESC linearClamp(
+			3, // shaderRegister
+			D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP); // addressW
+
+		const CD3DX12_STATIC_SAMPLER_DESC anisotropicWrap(
+			4, // shaderRegister
+			D3D12_FILTER_ANISOTROPIC, // filter
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+			D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressW
+			0.0f,                             // mipLODBias
+			8);                               // maxAnisotropy
+
+		const CD3DX12_STATIC_SAMPLER_DESC anisotropicClamp(
+			5, // shaderRegister
+			D3D12_FILTER_ANISOTROPIC, // filter
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressU
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressV
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  // addressW
+			0.0f,                              // mipLODBias
+			8);                                // maxAnisotropy
+
+		return {
+			pointWrap, pointClamp,
+			linearWrap, linearClamp,
+			anisotropicWrap, anisotropicClamp };
+	}
+
+
+	bool addTexture(ComPtr<ID3D12Device>& device, ComPtr<ID3D12GraphicsCommandList>& cmdList, const wstring& filename)
+	{
+		if (textures.find(filename) == textures.end())
+		{
+			Texture t; 
+			if (!t.loadTexture(device, cmdList, filename))
+				return false;
+			textures.insert({ filename, t });
+			count++;
+		}
+		return true;
+	}
+
+	bool getTexture(const wstring& filename, Texture** texture)
+	{
+		if (textures.find(filename) == textures.end())
+		{
+			// error
+			return false;
+		}
+		*texture = &textures[filename];
+		return true;
+	}
+
+	size_t& getSize() { return count; }
+
+	map<wstring, Texture>& getTexturesBuffer() { return textures; }
+};
+
 class PipelineStateObject
 {
 	ComPtr<ID3D12PipelineState> pipelineStateObject; // pso containing a pipeline state
@@ -406,7 +523,6 @@ public:
 		//	descriptorTableRanges[i].RegisterSpace = 0; // space 0. can usually be zero
 		//	descriptorTableRanges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND; // this appends the range to the end of the root signature descriptor tables
 		//}
-
 		//D3D12_ROOT_DESCRIPTOR_TABLE descriptorTable;
 		//descriptorTable.NumDescriptorRanges = descriptorTableRanges.size(); // we only have one range
 		//descriptorTable.pDescriptorRanges = descriptorTableRanges.data(); // the Point2er to the beginning of our ranges array
@@ -417,8 +533,7 @@ public:
 		//rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX; // our pixel shader will be the only shader accessing this parameter for now
 
 
-
-		// create a root descriptor, which explains where to find the data for this root parameter
+		// набор константных буферов
 		vector<D3D12_ROOT_DESCRIPTOR> rootCBVDescriptor(cBufferKeys.size());
 		for (int i(0); i < cBufferKeys.size(); i++)
 		{
@@ -426,25 +541,45 @@ public:
 			rootCBVDescriptor[i].ShaderRegister = 0;
 		}
 
-		// create a root parameter and fill it out
-		vector<D3D12_ROOT_PARAMETER>  rootParameters(cBufferKeys.size()); // only one parameter right now
+		// пока PSO держит одну текстуру
+		CD3DX12_DESCRIPTOR_RANGE texTable;
+		texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+		// создаем массив всех буферов
+		vector<CD3DX12_ROOT_PARAMETER> slotRootParameter;
+		CD3DX12_ROOT_PARAMETER rpt;
+		rpt.InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
+		slotRootParameter.push_back(rpt);
 		for (int i(0); i < cBufferKeys.size(); i++)
 		{
-			rootParameters[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // this is a constant buffer view root descriptor
-			rootParameters[i].Descriptor = rootCBVDescriptor[i]; // this is the root descriptor for this root parameter
-			rootParameters[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX; // our pixel shader will be the only shader accessing this parameter for now
+			CD3DX12_ROOT_PARAMETER rp;
+			rp.InitAsConstantBufferView(i);
+			slotRootParameter.push_back(rp);
 		}
 
-		CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
-		rootSignatureDesc.Init(rootParameters.size(), // we have 1 root parameter
-			rootParameters.data(), // a Point2er to the beginning of our root parameters array
-			0,
-			nullptr,
-			D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | // we can deny shader stages here for better performance
-			D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-			D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
-			D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
-			D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS);
+		// create a static sampler
+		/*D3D12_STATIC_SAMPLER_DESC sampler = {};
+		sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+		sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+		sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+		sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+		sampler.MipLODBias = 0;
+		sampler.MaxAnisotropy = 0;
+		sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+		sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+		sampler.MinLOD = 0.0f;
+		sampler.MaxLOD = D3D12_FLOAT32_MAX;
+		sampler.ShaderRegister = 0;
+		sampler.RegisterSpace = 0;
+		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;*/
+
+		auto staticSamplers = ContainerTextures::getStaticSamplers();
+
+		CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc(slotRootParameter.size(), // we have 1 root parameter
+			slotRootParameter.data(), // a Point2er to the beginning of our root parameters array
+			staticSamplers.size(),
+			staticSamplers.data(),
+			D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 		ComPtr<ID3DBlob> signature;
 		if (FAILED(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, nullptr)))
@@ -522,13 +657,14 @@ class Model
 	D3D12_SUBRESOURCE_DATA vertexData;
 	D3D12_SUBRESOURCE_DATA indexData;
 	size_t countIndex;
-	MatrixCPUAndGPU world;
 	size_t countParts;
 
 	wstring psoKey;
+	wstring textureName;
+	vector<MatrixCPUAndGPU> worlds;
 
 public:
-	Model():vBufferSize(0), world(Matrix4::Identity())
+	Model():vBufferSize(0)
 	{
 		vertexBufferView = {};
 		vertexData = {};
@@ -537,6 +673,7 @@ public:
 	bool createModel(ComPtr<ID3D12Device>& device, BlankModel& data)
 	{
 		//initVariables(data.size());
+		textureName = data.textureName;
 		if (!createBuffer(device, data.vertexs, vertexBuffer, vBufferSize, L"reserved name vb - todo"))
 			return false;
 		if (!createUploadBuffer(device, vBufferUploadHeap, vBufferSize, vertexData, data.vertexs, L"reserved name vb upload - todo"))
@@ -628,11 +765,12 @@ public:
 	D3D12_VERTEX_BUFFER_VIEW& getVertexBufferView() { return vertexBufferView; }
 	D3D12_INDEX_BUFFER_VIEW& getIndexBufferView() { return indexBufferView; }
 	size_t& getCountIndex() {return countIndex;}
-	void setWorld(const Matrix4& m) { world.updateCPUMatrix(m); }
-	void setWorld(const MatrixCPUAndGPU& m) { world = m; }
-	MatrixCPUAndGPU& getWorld() { return world; }
+	void addWorld(const Matrix4& m) { MatrixCPUAndGPU _m(m); worlds.push_back(_m); }
+	void addWorld(const MatrixCPUAndGPU& m) { worlds.push_back(m); }
+	vector<MatrixCPUAndGPU>& getWorlds() { return worlds; }
 	size_t& getCountParts() { return countParts; }
 	wstring& getPsoKey() { return psoKey; }
+	wstring& getTextureName() { return textureName; }
 };
 
 using ModelPtr = shared_ptr<Model>;
@@ -860,6 +998,7 @@ class Window
 	ComPtr<ID3D12DescriptorHeap> dsDescriptorHeap; // This is a heap for our depth/stencil buffer descriptor
 
 	vector<ComPtr<ID3D12DescriptorHeap>> mainDescriptorHeap; // this heap will store the descripor to our constant buffer
+	//ComPtr<ID3D12DescriptorHeap> mainDescriptorHeap; // this heap will store the descripor to our constant buffer
 
 	shared_ptr<Camera> camera;
 	TypeCamera typeCamera;
@@ -877,8 +1016,12 @@ class Window
 
 	ContainerShader shaders;
 
+	ContainerTextures textures;
+	size_t mCbvSrvDescriptorSize;
+
 	map<wstring, PipelineStateObjectPtr> psos;
 	vector<ModelPtr> models;
+	map<wstring, size_t> modelsIndex;
 	map<wstring, CBufferGeneralPtr> cBuffers;
 
 	shared_ptr<SoundDevice> sndDevice;
@@ -1042,7 +1185,7 @@ public:
 	{
 		HRESULT hr;
 
-	/*	if (!enableDebugLayer())
+		/*if (!enableDebugLayer())
 			return false;*/
 		if (!createFactory())
 			return false;
@@ -1083,15 +1226,15 @@ public:
 		if (!setProperties())
 			return false;
 
-
-		//if (!createBuffersDescriptorHeap())
-		//	return false;
-
+		// create PSOs
 		if (!loadPSO(L"pso.pCfg"))
 			return false;
 
 		// create model
+		mCbvSrvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		if (!initializeSceneDirect3D())
+			return false;
+		if (!createBuffersDescriptorHeap())
 			return false;
 
 		// close command list
@@ -1430,12 +1573,55 @@ public:
 		for (int i = 0; i < frameBufferCount; ++i)
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-			heapDesc.NumDescriptors = 1;
+			heapDesc.NumDescriptors = textures.getSize();
 			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(mainDescriptorHeap[i].GetAddressOf()))))
 				return false;
+			CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mainDescriptorHeap[i]->GetCPUDescriptorHandleForHeapStart());
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = -1;
+			size_t index(0);
+			for (auto it(textures.getTexturesBuffer().begin()); it != textures.getTexturesBuffer().end(); ++it)
+			{
+				auto texture = it->second.getTexture();
+				srvDesc.Format = texture->GetDesc().Format;
+				device->CreateShaderResourceView(texture.Get(), &srvDesc, hDescriptor);
+				Texture* _texture(nullptr);
+				if (!textures.getTexture(it->first, &_texture))
+					return false;
+				_texture->setIndexSrvHeap(index++);
+				// next descriptor
+				hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+			}
 		}
+
+		//D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+		//heapDesc.NumDescriptors = textures.getSize();
+		//heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		//heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		//if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(mainDescriptorHeap.GetAddressOf()))))
+		//	return false;
+		//CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mainDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+		//D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		//srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		//srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		//srvDesc.Texture2D.MostDetailedMip = 0;
+		//srvDesc.Texture2D.MipLevels = -1;
+		//size_t index(0);
+		//for (auto it(textures.getTexturesBuffer().begin()); it != textures.getTexturesBuffer().end(); ++it)
+		//{
+		//	auto texture = it->second.getTexture();
+		//	srvDesc.Format = texture->GetDesc().Format;
+		//	device->CreateShaderResourceView(texture.Get(), &srvDesc, hDescriptor);
+		//	textures.getTexture(it->first).setIndexSrvHeap(index++);
+		//	// next descriptor
+		//	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+		//}
+
 		return true;
 	}
 
@@ -1460,8 +1646,9 @@ public:
 			// create cBuffers
 			for_each(pP.cBuffNames.begin(), pP.cBuffNames.end(), [this, &cBCreator](const wstring& cBuffName)
 				{
+					vector<ComPtr<ID3D12DescriptorHeap>> stop;
 					if (cBuffers.find(cBuffName) == cBuffers.end())
-						cBuffers.insert({ cBuffName , cBCreator.createCBuffer(cBuffName, device, mainDescriptorHeap, frameBufferCount) });
+						cBuffers.insert({ cBuffName , cBCreator.createCBuffer(cBuffName, device, stop, frameBufferCount) });
 				}
 			);
 			// create PSO
@@ -1526,29 +1713,14 @@ public:
 
 	bool initializeSceneDirect3D() 
 	{
-		BlankModel bm;
+		// cube color
 		array<Color, 2> colors =
 		{
 			Color(0.f, .49f, .05f, 1.f),
 			Color(0.41f, 0.24f, 0.49f, 1.f)
 		};
-		bm.indexs =
-		{
-			0, 3, 2,
-			0, 2, 1
-		};
-		bm.vertexs =
-		{
-			Vertex({-50.f,  0.f,  -50.f}, {0,0,0},  colors[0]),
-			Vertex({50.f,  0.f,  -50.f},{0,0,0}, colors[0]),
-			Vertex({50.f,  0.f, 50.f},{0,0,0}, colors[0]),
-			Vertex({-50.f,  0.f,  50.f},{0,0,0}, colors[0])
-		};
-		bm.psoName = L"PSOModelColorNoLight";
-		if (!createModel(bm))
-			return false;
-
-		BlankModel bm1;
+		BlankModel bm;
+		bm.nameModel = L"cube color";
 		float value(5.f);
 		vector<Vector3> _v = {
 			 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
@@ -1560,7 +1732,7 @@ public:
 			 Vector3(value, -value, value),
 			 Vector3(-value, -value, value)
 		};
-		bm1.vertexs = {
+		bm.vertexs = {
 			Vertex(_v[0],{0,0,0},  colors[1]),
 			Vertex(_v[1],{0,0,0},  colors[1]),
 			Vertex(_v[2],{0,0,0},  colors[1]),
@@ -1570,7 +1742,7 @@ public:
 			Vertex(_v[6] ,{0,0,0},  colors[1]),
 			Vertex(_v[7], {0,0,0},  colors[1])
 		};
-		bm1.indexs= {
+		bm.indexs= {
 			3,1,0,
 		2,1,3,
 		0,5,4,
@@ -1584,24 +1756,121 @@ public:
 		6,4,5,
 		7,4,6
 		};
-		bm1.psoName = L"PSOModelColorNoLight";
+		bm.psoName = L"PSOModelColorNoLight";
 		auto world1(Matrix4::CreateTranslationMatrixXYZ(-14, 10, 0));
-		if (!createModel(bm1, &world1))
+		if (!createModel(bm, world1))
+			return false;
+
+		world1 = Matrix4::CreateTranslationMatrixXYZ(-28, 8, 0);
+		if (!createModel(bm, world1))
+			return false;
+
+		// plane grass
+		bm.nameModel = L"plane grass";
+		bm.textureName = L"pGrass.dds";
+		bm.indexs =
+		{
+			0, 3, 2,
+			0, 2, 1
+		};
+		bm.vertexs =
+		{
+			Vertex({-50.f,  0.f,  -50.f}, {0,0,0},  {-1,2,0,0}),
+			Vertex({50.f,  0.f,  -50.f},{0,0,0}, {2,2,0,0}),
+			Vertex({50.f,  0.f, 50.f},{0,0,0}, {2,-1,0,0}),
+			Vertex({-50.f,  0.f,  50.f},{0,0,0}, {-1,-1,0,0})
+		};
+		bm.psoName = L"PSOModelSingleTextureNoLight";
+		if (!createModel(bm))
+			return false;
+
+		// plane desc
+		bm.nameModel = L"plane wood";
+		bm.textureName = L"pWoodDesc.dds";
+		Matrix4 trans = Matrix4::CreateTranslationMatrixX(-100);
+		if (!createModel(bm, trans))
+			return false;
+
+
+		// cube desc
+		value = 2.f;
+		_v = {
+			 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
+			 Vector3(value, value, -value) ,
+			 Vector3(value, value, value),
+			 Vector3(-value, value, value),
+			 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
+			 Vector3(value, -value, -value),
+			 Vector3(value, -value, value),
+			 Vector3(-value, -value, value)
+		};
+		bm.vertexs = {
+			Vertex(_v[0], {0,0,0,0}, {0.35f, 1.f, 0}),
+			Vertex(_v[1], {0,0,0,0},{0.63f, 1.f, 0}),
+			Vertex(_v[2],{0,0,0,0}, {0.63f, 0.75f, 0}),
+			Vertex(_v[3], {0,0,0,0},{0.35f, 0.75f, 0}),
+			Vertex(_v[7], {0,0,0,0},{0.12f, 0.75f, 0}),
+			Vertex(_v[4], {0,0,0,0},{0.12f, 1.f, 0}),
+			Vertex(_v[5], {0,0,0,0},{0.85f, 1.f, 0}),
+			Vertex(_v[6], {0,0,0,0},{0.85f, 0.75f, 0}),
+			Vertex(_v[7], {0,0,0,0},{0.35f, 0.5f, 0}),
+			Vertex(_v[6], {0,0,0,0},{0.63f, 0.5f, 0}),
+			Vertex(_v[4], {0,0,0,0},{0.35f, 0.25f, 0}),
+			Vertex(_v[5], {0,0,0,0},{0.63f, 0.25f, 0}),
+			Vertex(_v[0],{0,0,0,0}, {0.35f, 0.f, 0}),
+			Vertex(_v[1], {0,0,0,0},{0.63f, 0.f, 0})
+		};
+		// generate index
+		bm.indexs = {
+			10,12,11,
+			11,12,13,
+			8,10,9,
+			9,10,11,
+			3,8,2,
+			2,8,9,
+			5,4,0,
+			0,4,3,
+			0,3,1,
+			1,3,2,
+			1,2,6,
+			6,2,7
+		};
+		bm.nameModel = L"cube wood";
+		bm.textureName = L"pWoodDoski.dds";
+		trans = Matrix4::CreateTranslationMatrixXYZ(25, 5, -13);
+		if (!createModel(bm, trans))
+			return false;
+		trans = Matrix4::CreateTranslationMatrixXYZ(25, 20, -13);
+		if (!createModel(bm, trans))
+			return false;
+		trans = Matrix4::CreateTranslationMatrixXYZ(25, 40, -13);
+		if (!createModel(bm, trans))
 			return false;
 
 		return true;
 	}
 
-	bool createModel(BlankModel& data, Matrix4* world = nullptr)
+	bool createModel(BlankModel& data, Matrix4 world = Matrix4::Identity())
 	{
 		ModelPtr model(new Model());
-		if (!model->createModel(device, data))
-			return false;
-		translationVertexBufferForHeapGPU(model->getVertexBuffer(), model->getUploadVertexBuffer(), model->getSubresourceVertexData());
-		translationVertexBufferForHeapGPU(model->getIndexBuffer(), model->getUploadIndexBuffer(), model->getSubresourceIndexData());
-		if (world)
-			model->setWorld(*world);
-		models.push_back(model);
+		if (modelsIndex.find(data.nameModel) == modelsIndex.end())
+		{
+			if(!data.textureName.empty())
+				if (!textures.addTexture(device, commandList, data.textureName))
+					return false;
+			if (!model->createModel(device, data))
+				return false;
+			translationVertexBufferForHeapGPU(model->getVertexBuffer(), model->getUploadVertexBuffer(), model->getSubresourceVertexData());
+			translationVertexBufferForHeapGPU(model->getIndexBuffer(), model->getUploadIndexBuffer(), model->getSubresourceIndexData());
+			model->addWorld(world);
+			models.push_back(model);
+			modelsIndex.insert({ data.nameModel, models.size() - 1 });
+		}
+		else
+		{
+			size_t index = modelsIndex[data.nameModel];
+			models[index]->addWorld(world);
+		}
 		return true;
 	}
 
@@ -1734,11 +2003,16 @@ public:
 	{
 		auto view = camera->getView().getGPUMatrix();
 		auto proj = camera->getProjection().getGPUMatrix();
-		for (int i(0); i < models.size(); i++)
+		size_t countAllCb(0);
+		for (size_t i(0); i < models.size(); i++)
 		{
 			// updates cb
-			cbufferCamera cbCam(models[i]->getWorld().getGPUMatrix(), view, proj);
-			cBuffers[L"cbCamera"]->updateData(cbCam, frameIndex, i);
+			size_t countWorlds = models[i]->getWorlds().size();
+			for (size_t j(0); j < countWorlds; j++)
+			{
+				cbufferCamera cbCam(models[i]->getWorlds().at(j).getGPUMatrix(), view, proj);
+				cBuffers[L"cbCamera"]->updateData(cbCam, frameIndex, countAllCb++);
+			}
 		}
 		return true;
 	}
@@ -1768,7 +2042,7 @@ public:
 		// anything but an initial default pipeline, which is what we get by setting
 		// the second parameter to NULL
 
-		hr = commandList->Reset(commandAllocator[frameIndex].Get(), psos.begin()->second->getPipelineStateObject().Get());
+		hr = commandList->Reset(commandAllocator[frameIndex].Get(), nullptr);
 		if (FAILED(hr))
 			return false;
 
@@ -1796,19 +2070,38 @@ public:
 		commandList->RSSetViewports(1, &viewport); // set the viewports
 		commandList->RSSetScissorRects(1, &scissorRect); // set the scissor rects
 
+		// set the descriptor heap
+		vector<ID3D12DescriptorHeap*> descriptorHeaps = { mainDescriptorHeap[frameIndex].Get() };
+		//vector<ID3D12DescriptorHeap*> descriptorHeaps = { mainDescriptorHeap.Get() };
+		commandList->SetDescriptorHeaps(descriptorHeaps.size(), descriptorHeaps.data());
+
+		size_t countAllCb(0);
 		for (auto&& pso : psos)
 		{
 			commandList->SetPipelineState(pso.second->getPipelineStateObject().Get());
 			commandList->SetGraphicsRootSignature(pso.second->getRootSignature().Get());
-			for (int i(0); i < models.size();i++)
+			for (int i(0); i < models.size(); i++)
 			{
-				if (models[i]->getPsoKey() == models[i]->getPsoKey())
+				if (models[i]->getPsoKey() == pso.first)
 				{
-					commandList->SetGraphicsRootConstantBufferView(0, cBuffers[L"cbCamera"]->getConstantBufferUploadHeap(frameIndex, i));
+					Texture* texture(nullptr);
+					if (textures.getTexture(models[i]->getTextureName(), &texture))
+					{
+						CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap[frameIndex]->GetGPUDescriptorHandleForHeapStart());
+						//CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+						auto textureSrvIndex = texture->getIndexSrvHeap();
+						tex.Offset(textureSrvIndex, mCbvSrvDescriptorSize);
+						commandList->SetGraphicsRootDescriptorTable(0, tex);
+					}
+					size_t countWorlds = models[i]->getWorlds().size();
 					commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
 					commandList->IASetVertexBuffers(0, 1, &models[i]->getVertexBufferView()); // set the vertex buffer (using the vertex buffer view)
 					commandList->IASetIndexBuffer(&models[i]->getIndexBufferView());
-					commandList->DrawIndexedInstanced(models[i]->getCountIndex(), 1, 0, 0, 0);
+					for (size_t j(0); j < countWorlds; j++)
+					{
+						commandList->SetGraphicsRootConstantBufferView(1, cBuffers[L"cbCamera"]->getConstantBufferUploadHeap(frameIndex, countAllCb++));
+						commandList->DrawIndexedInstanced(models[i]->getCountIndex(), 1, 0, 0, 0);
+					}
 				}
 			}
 		}
