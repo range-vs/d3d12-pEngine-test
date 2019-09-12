@@ -113,6 +113,9 @@ namespace gmath
 		static Vector_2 vector2TransformCoord(const Vector_2<T>& v, const Matrix_4<T>& m);
 		void vector2TransformNormal(const Matrix_4<T>& m);
 		static Vector_2 vector2TransformNormal(const Vector_2<T>& v, const Matrix_4<T>& m);
+
+		// возврат массива
+		void toArray(T* arr);
 	};
 
 	// преобразование типов
@@ -597,5 +600,13 @@ namespace gmath
 		Vector_2<T> tmp(v);
 		tmp.vector2TransformNormal(m);
 		return tmp;
+	}
+
+	// возвращаем массив
+	template<class T>
+	inline void gmath::Vector_2<T>::toArray(T* arr)
+	{
+		arr[0] = this->x;
+		arr[1] = this->y;
 	}
 }

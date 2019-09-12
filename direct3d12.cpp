@@ -35,7 +35,6 @@ using Microsoft::WRL::ComPtr;
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "D3Dcompiler.lib")
-#pragma comment(lib, "d3d12.lib")
 
 
 //extern "C"
@@ -209,6 +208,8 @@ public:
 		if ((mDelta[x] != 0) || (mDelta[y] != 0))
 		{
 			OutputDebugString(L"Mouse moved\n");
+			wstring out = to_wstring(mDelta[x]) + L" : " + to_wstring(mDelta[y]) + L"\n";
+			OutputDebugString(out.c_str());
 			currentProperties.camYaw += (mDelta[x] * 0.001f);
 			currentProperties.camPitch += (mDelta[y] * 0.001f);
 			currentProperties.lastPosMouse = currentProperties.mouseCurrState;
@@ -963,8 +964,12 @@ class Window
 	HWND hwnd;
 	LPCTSTR windowName;
 	LPCTSTR windowTitle;
-	int width;
-	int height;
+	int widthClient;
+	int heightClient;
+	int startWidth;
+	int startHeight;
+	int widthWindow;
+	int heightWindow;
 
 	int frameBufferCount;
 	ComPtr<IDXGIFactory4> dxgiFactory;
@@ -1006,11 +1011,9 @@ class Window
 	map<char, bool> keyStatus;
 
 	bool vsync;
-	float r;
-	float g;
-	float b;
-	float a;
+	Color backBufferColor;
 	bool modeWindow;
+	bool isRunning;
 	static Window* current;
 	FPSCounter fpsCounter;
 
@@ -1030,13 +1033,12 @@ public:
 
 	Window(int buffering, int vsync, bool msaaState, int w, int h, TypeCamera tc = TypeCamera::STATIC_CAMERA, bool md = false)
 	{
-		r = g = b = 0.53f;
-		a = 1.f;
+		backBufferColor = { 0.53f, 0.53f, 0.53f, 1.f };
 		hwnd = nullptr;
 		windowName = L"dx12_className";
 		windowTitle = L"DX12 Render Triangles";
-		width = w;
-		height = h;
+		widthClient = w;
+		heightClient = h;
 		frameBufferCount = buffering;
 		renderTargets.resize(buffering);
 		commandAllocator.resize(buffering);
@@ -1066,6 +1068,21 @@ public:
 		modeWindow = md;
 		mainDescriptorHeap.resize(buffering);
 		typeCamera = tc;
+		isRunning = false;
+	}
+
+	void updateSize()
+	{
+		RECT clientWindowRect;
+		GetClientRect(hwnd, &clientWindowRect);
+		widthClient = clientWindowRect.right;
+		heightClient = clientWindowRect.bottom;
+		startWidth = clientWindowRect.left;
+		startHeight = clientWindowRect.top;
+		RECT windowRect;
+		GetWindowRect(hwnd, &windowRect);
+		widthWindow = windowRect.right - windowRect.left;
+		heightWindow = windowRect.bottom - windowRect.top;
 	}
 
 	bool initializeWindow(HINSTANCE hInstance)
@@ -1080,7 +1097,7 @@ public:
 		wc.hInstance = hInstance;
 		wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
 		wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-		wc.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH); // (HBRUSH)(CreateSolidBrush(RGB(r * 255, g * 255, b * 255)));
+		wc.hbrBackground = (HBRUSH)(CreateSolidBrush(RGB(backBufferColor[r] * 255, backBufferColor[g] * 255, backBufferColor[b] * 255)));
 		wc.lpszMenuName = NULL;
 		wc.lpszClassName = windowName;
 		wc.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
@@ -1097,7 +1114,7 @@ public:
 			windowTitle,
 			WS_OVERLAPPEDWINDOW,
 			CW_USEDEFAULT, CW_USEDEFAULT,
-			width, height,
+			widthClient, heightClient,
 			NULL,
 			NULL,
 			hInstance,
@@ -1110,6 +1127,10 @@ public:
 			return false;
 		}
 
+		updateSize();
+
+		ShowWindow(hwnd, SW_SHOW);
+		UpdateWindow(hwnd);
 		return true;
 	}
 	
@@ -1146,30 +1167,46 @@ public:
 
 		case WM_SIZE:
 		{
-			RECT rect;
-			if (GetClientRect(hwnd, &rect))
+			Window::current->updateSize();
+			if (Window::current->device)
 			{
-				int width = rect.right - rect.left;
-				int height = rect.bottom - rect.top;
-				if (!Window::current->resize(width, height))
+				if (wParam == SIZE_MINIMIZED)
 				{
-					DestroyWindow(hwnd);
+					Window::current->isRunning = false;
+					break;
+				}
+				else if (wParam == SIZE_RESTORED)
+				{
+					Window::current->isRunning = true;
+				}
+				if (!Window::current->resize(Window::current->widthWindow, Window::current->heightWindow))
+				{
+					PostQuitMessage(0);
 					return 0;
 				}
-			}
-			else
-			{
-				DestroyWindow(hwnd);
-				return 0;
+				Window::current->drawFrame();
 			}
 			break;
 		}
 		
 		case WM_MOUSEMOVE: 
 		{
-			SetCursorPos(Window::current->width / 2, Window::current->height / 2);
-			LONG xPos = LOWORD(lParam);
-			LONG yPos = HIWORD(lParam);
+			POINT p;
+			LONG xPos;
+			LONG yPos;
+			if (GetCursorPos(&p))
+			{
+				xPos = p.x; 
+				yPos = p.y;
+			}
+			if (Window::current->typeCamera == GAME_CAMERA)
+			{
+				RECT winRect;
+				GetClientRect(hwnd, &winRect);
+				int _x = ((winRect.right + winRect.left) / 2);
+				int _y = ((winRect.bottom + winRect.top) / 2);
+				SetCursorPos(_x, _y);
+			}
 			Window::current->camProp.mouseCurrState = { xPos, yPos };
 			break;
 		}
@@ -1185,45 +1222,34 @@ public:
 	{
 		HRESULT hr;
 
-		/*if (!enableDebugLayer())
-			return false;*/
+		if (!enableDebugLayer())
+			return false;
 		if (!createFactory())
 			return false;
 		getAllGraphicAdapters();
 		if (!tryCreateRealDevice())
 			return false;
-		if (!checkSupportMSAAQuality())
+		/*if (!checkSupportMSAAQuality())
+			return false;*/
+		if (!createFence())
 			return false;
 		if (!createCommandQueue())
-			return false;
-
-		createCamera();
-		if (!createSwapChain())
-			return false;
-		// replace mode screen
-		ShowWindow(hwnd, SW_SHOW);
-		if (modeWindow)
-		{
-			ShowCursor(0);
-			SetCapture(hwnd);
-		}
-		UpdateWindow(hwnd);
-		if (!changeModeDisplay())
-			return false;
-
-		if (!createBackBuffer())
 			return false;
 		if (!createCommandAllocators())
 			return false;
 		if (!createCommandList())
 			return false;
-		if (!createFence())
+		createCamera();
+		if (!createSwapChain())
 			return false;
-		createViewport();
-		createScissor();
-		if (!createDepthAndStencilBuffer())
-			return false;
+
+		// resize
+		isRunning = true;
 		if (!setProperties())
+			return false;
+		if (!changeModeDisplay())
+			return false;
+		if (!resize(widthWindow, heightWindow))
 			return false;
 
 		// create PSOs
@@ -1239,12 +1265,13 @@ public:
 
 		// close command list
 		commandList->Close();
-		ID3D12CommandList* ppCommandLists[] = { commandList.Get() };
-		commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+		vector<ID3D12CommandList*> cmdsLists = { commandList.Get() };
+		commandQueue->ExecuteCommandLists(cmdsLists.size(), cmdsLists.data());
 
 		// create views buffer for all model (vb/ib)
 		createBuffersViews();
 
+		// fps counter
 		fpsCounter.start();
 		fpsCounter.setBeforeTime();
 
@@ -1366,6 +1393,7 @@ public:
 
 		if (FAILED(device->CreateCommandQueue(&cqDesc, IID_PPV_ARGS(commandQueue.GetAddressOf()))))
 			return false;
+		commandQueue->SetName(L"Command queue");
 		return true;
 	}
 
@@ -1398,9 +1426,9 @@ public:
 			return false;
 		frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-		/*DXGI_RGBA swapChainBkColor = { r, g, b, a };
+		DXGI_RGBA swapChainBkColor = { backBufferColor[r], backBufferColor[g], backBufferColor[b], backBufferColor[a]};
 		if(FAILED(swapChain->SetBackgroundColor(&swapChainBkColor)))
-			return false;*/
+			return false;
 
 		return true;
 	}
@@ -1419,9 +1447,9 @@ public:
 		bool isStop(false);
 		for (size_t i(0); i < numModes; i++)
 		{
-			if (displayModeList[i].Width == (uint)width)
+			if (displayModeList[i].Width == (uint)widthClient)
 			{
-				if (displayModeList[i].Height == (uint)height)
+				if (displayModeList[i].Height == (uint)heightClient)
 				{
 					uint numerator = displayModeList[i].RefreshRate.Numerator;
 					uint denominator = displayModeList[i].RefreshRate.Denominator;
@@ -1512,8 +1540,8 @@ public:
 	{
 		viewport.TopLeftX = 0;
 		viewport.TopLeftY = 0;
-		viewport.Width = width;
-		viewport.Height = height;
+		viewport.Width = widthClient;
+		viewport.Height = heightClient;
 		viewport.MinDepth = 0.0f;
 		viewport.MaxDepth = 1.0f;
 	}
@@ -1522,8 +1550,8 @@ public:
 	{
 		scissorRect.left = 0;
 		scissorRect.top = 0;
-		scissorRect.right = width;
-		scissorRect.bottom = height;
+		scissorRect.right = widthClient;
+		scissorRect.bottom = heightClient;
 	}
 
 	bool createDepthAndStencilBuffer()
@@ -1549,7 +1577,7 @@ public:
 		if(FAILED(device->CreateCommittedResource(
 			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
 			D3D12_HEAP_FLAG_NONE,
-			&CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT, width, height, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
+			&CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT, widthClient, heightClient, 1, 0, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
 			D3D12_RESOURCE_STATE_DEPTH_WRITE,
 			&depthOptimizedClearValue,
 			IID_PPV_ARGS(depthStencilBuffer.GetAddressOf())
@@ -1705,9 +1733,12 @@ public:
 			float step(15.f);
 			float run(30.f);
 			camera.reset(new GameCamera(step, run, pos, dir));
+			ShowCursor(0);
+			SetCapture(hwnd);
+			SetCursorPos((widthClient + startWidth) / 2, (heightClient + startHeight) / 2);
 			break;
 		}
-		camera->updateProjection(3.14159f / 4.f, width / (FLOAT)height, 0.01f, 1000.f);
+		camera->updateProjection(3.14159f / 4.f, widthClient / (FLOAT)heightClient, 0.01f, 1000.f);
 	}
 
 
@@ -1910,7 +1941,7 @@ public:
 			return false;
 		if (!sndDevice->addSound(L"run.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.5f))
 			return false;
-		if (!sndDevice->addSound(L"ambient2.wav", { 0.f, 0.f, 0.f }, AMBIENT_SOUND, true, false, 0.1f))
+		if (!sndDevice->addSound(L"ambient.wav", { 0.f, 0.f, 0.f }, AMBIENT_SOUND, true, false, 0.1f))
 			return false;
 		if (!sndDevice->addSound(L"heavy_wind_2.wav", direct3DVector3ToOpenGLVector3(Vector3(-90.f, 0.f, 90.f)), STATIC_SOUND, true, false, 40.f))
 			return false;
@@ -1941,16 +1972,27 @@ public:
 			}
 			else 
 			{
-				// run game code
-				if (!updateCamera())
-					break;
-				updateSound(); // update sound
-				if (!updateScene()) // update the game logic
-					break;
-				if (!render()) // execute the command queue (rendering the scene is the result of the gpu executing the command lists)
-					break;
+				if (isRunning)
+				{
+					if (!drawFrame())
+						break;
+				}
+				else
+					Sleep(100);
 			}
 		}
+	}
+
+	bool drawFrame()
+	{
+		if (!updateCamera())
+			return false;
+		updateSound(); // update sound
+		if (!updateScene()) // update the game logic
+			return false;
+		if (!render()) // execute the command queue (rendering the scene is the result of the gpu executing the command lists)
+			return false;
+		return true;
 	}
 
 	double GetFrameTime()
@@ -1978,7 +2020,11 @@ public:
 
 	bool updateCamera()
 	{
-		Point2 mDelta(camProp.mouseCurrState[x] - (width / 2), camProp.mouseCurrState[y] - (height / 2));
+		RECT winRect;
+		GetWindowRect(hwnd, &winRect);
+		int _x = (widthClient + startWidth) / 2;
+		int _y = (heightClient + startHeight) / 2;
+		Point2 mDelta(camProp.mouseCurrState[x] - _x, camProp.mouseCurrState[y] - _y);
 		camera->updateCamera(keyStatus, mDelta, GetFrameTime());
 
 		return true;
@@ -1996,7 +2042,7 @@ public:
 			sndDevice->update(ACTOR_SOUND, nameSnd.c_str(), pos);
 			sndDevice->play(ACTOR_SOUND, nameSnd.c_str());
 		}
-		sndDevice->update(AMBIENT_SOUND, L"ambient2.wav", pos);
+		sndDevice->update(AMBIENT_SOUND, L"ambient.wav", pos);
 	}
 
 	bool updateScene()
@@ -2060,7 +2106,8 @@ public:
 		commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
 		// Clear the render target by using the ClearRenderTargetView command
-		const float clearColor[] = { r, g, b, a };
+		float clearColor[4];
+		backBufferColor.toArray(clearColor);
 		commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
 		// clearing depth/stencil buffer
@@ -2153,30 +2200,30 @@ public:
 
 	bool resize(int w, int h)
 	{
-		width = w;
-		height = h;
-		if (swapChain)
+		if (device && swapChain && commandAllocator[frameIndex])
 		{
 			HRESULT hr;
+			flushGpu();
 			for (int i(0); i < frameBufferCount; i++)
 				renderTargets[i].Reset();
-			hr = swapChain->ResizeBuffers(frameBufferCount, width, height, backBufferFormat, NULL);
+			depthStencilBuffer.Reset();
+			hr = swapChain->ResizeBuffers(frameBufferCount, w, h, backBufferFormat, NULL);
 			if (FAILED(hr))
 				return false;
 			createBackBuffer();
-			createViewport();
-			createScissor();
 			if (!createDepthAndStencilBuffer())
 				return false;
-			camera->updateProjection(0.4f * 3.14f, width / (FLOAT)height, 1.f, 1000.f);
+			createViewport();
+			createScissor();
+			camera->updateProjection(0.4f * 3.14f, widthClient / (FLOAT)heightClient, 1.f, 1000.f);
+			return true;
 		}
-		return true;
+		return false;
 	}
 
 	bool changeModeDisplay()
 	{		
 		HRESULT hr;
-
 		auto output = !isWarpAdapter ? adapters[indexCurrentAdapter].getAdapterOutputs().at(0).getOutput().Get() : warpAdapter.getAdapterOutputs().at(0).getOutput().Get();
 		hr = swapChain->SetFullscreenState(modeWindow, modeWindow ? output: nullptr);
 		if (FAILED(hr))
@@ -2216,6 +2263,21 @@ public:
 		return true;
 	}
 
+	void flushGpu()
+	{
+		for (int i = 0; i < frameBufferCount; i++)
+		{
+			uint64_t fenceValueForSignal = ++fenceValue[i];
+			commandQueue->Signal(fence[i].Get(), fenceValueForSignal);
+			if (fence[i]->GetCompletedValue() < fenceValue[i])
+			{
+				fence[i]->SetEventOnCompletion(fenceValueForSignal, fenceEvent);
+				WaitForSingleObject(fenceEvent, INFINITE);
+			}
+		}
+		frameIndex = 0;
+	}
+
 	~Window()
 	{
 		CloseHandle(fenceEvent);
@@ -2228,7 +2290,7 @@ Window* Window::current(nullptr);
 int WINAPI WinMain(HINSTANCE hInstance,  HINSTANCE hPrevInstance, LPSTR lpCmdLine,  int nShowCmd)
 {
 	// create the window
-	shared_ptr<Window>  window(new Window(3, 0, 1, 900, 650, TypeCamera::GAME_CAMERA, true));
+	shared_ptr<Window>  window(new Window(3, 0, 1, 900, 650, TypeCamera::STATIC_CAMERA));
 	if (!window->initializeWindow(hInstance))
 	{
 		MessageBox(0, L"Window Initialization - Failed", L"Error", MB_OK);
@@ -2266,6 +2328,8 @@ int WINAPI WinMain(HINSTANCE hInstance,  HINSTANCE hPrevInstance, LPSTR lpCmdLin
 // присед, полный присед - реализовать
 
 // msaa - разобраться, как включать
-// переход из полного экрана и обратно - реализовать по своему алгоритму
+
+
+
 
 // звук - звуки статические - всегда делать СТЕРЕО

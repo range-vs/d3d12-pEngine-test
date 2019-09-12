@@ -141,7 +141,6 @@
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="DDSTextureLoader.h" />
     <ClInclude Include="PSOLoader.h" />
-    <ClInclude Include="stdafx.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="Utils.h" />
   </ItemGroup>

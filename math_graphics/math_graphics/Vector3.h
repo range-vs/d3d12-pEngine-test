@@ -124,6 +124,8 @@ namespace gmath
 		void vector3TransformNormal(const Matrix_4<T>& m);
 		Vector_3 vector3TransformNormal(const Vector_3<T>& v, const Matrix_4<T>& m);
 
+		// возврат массива
+		void toArray(T* arr);
 	};
 
 	// конструкторы
@@ -674,5 +676,14 @@ namespace gmath
 		Vector_3<T> _v(v);
 		_v.vector3TransformNormal(m);
 		return _v;
+	}
+
+	// возвращаем массив
+	template<class T>
+	inline void gmath::Vector_3<T>::toArray(T* arr)
+	{
+		arr[0] = this->x;
+		arr[1] = this->y;
+		arr[2] = this->z;
 	}
 }

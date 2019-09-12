@@ -122,6 +122,8 @@ namespace gmath
 		void vector4TransformNormal(const Matrix_4<T>& m);
 		Vector_4 vector4TransformNormal(const Vector_4<T>& v, const Matrix_4<T>& m);
 
+		// возврат массива
+		void toArray(T* arr);
 	};
 
 	// конструкторы
@@ -705,6 +707,16 @@ namespace gmath
 	{
 		Vector_4<T> _v(v); _v.vector4TransformNormal(m);
 		return _v;
+	}
+
+	// возвращаем массив
+	template<class T>
+	inline void gmath::Vector_4<T>::toArray(T* arr)
+	{
+		arr[0] = this->x;
+		arr[1] = this->y;
+		arr[2] = this->z;
+		arr[3] = this->w;
 	}
 
 }
