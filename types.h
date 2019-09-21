@@ -1,11 +1,11 @@
 #pragma once
 
+#include "sBufferTypes.h"
+
 #include <vector>
 
-#include "math_graphics/math_graphics/mathematics.h"
-using namespace gmath;
-
 using namespace std;
+
 
 using uint = unsigned int;
 using uint8 = unsigned char;
@@ -20,15 +20,19 @@ struct Vertex
 	Vector4 color;
 
 	Vertex(const Vector3& p, const Vector3& n, const Vector4& cl) :pos(p), normals(n), color(cl) {}
+	Vertex():pos(), normals(), color(){}
 };
 
 struct BlankModel
 {
 	vector<Index> indexs;
+	vector<size_t> shiftIndexs;
 	vector<Vertex> vertexs;
 	wstring material;
 	wstring psoName;
-	wstring textureName;
+	vector<wstring> textureName;
 	wstring nameModel;
-
+	bool instansing = false;
+	vector< sbufferInstancing> instansingBuffer;
 };
+

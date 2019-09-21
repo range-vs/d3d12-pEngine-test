@@ -2,6 +2,7 @@
 
 // c++
 #include <initializer_list>
+#include <vector>
 #include <math.h>
 
 // math library
@@ -27,13 +28,6 @@ namespace gmath
 		_Vector(const _Vector& v);
 		_Vector(const T& x, const T& y) :x(x), y(y) {}
 		_Vector(const std::initializer_list<T>& t);
-		// методы
-		/*virtual float length() = 0;
-		virtual void normalize() = 0;
-		virtual void inverse() = 0;
-		virtual void identity() = 0;
-		virtual std::string c_str() = 0;
-		virtual std::wstring c_wstr() = 0;*/
 	};
 
 	// скрытые методы

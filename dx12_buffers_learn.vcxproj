@@ -99,7 +99,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(SolutionDir)$(Platform)\$(Configuration)\pSound.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(SolutionDir)$(Platform)\$(Configuration)\pSound.lib;$(SolutionDir)$(Platform)\$(Configuration)\math_graphics.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -141,6 +141,8 @@
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="DDSTextureLoader.h" />
     <ClInclude Include="PSOLoader.h" />
+    <ClInclude Include="sBufferFactory.h" />
+    <ClInclude Include="sBufferTypes.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="Utils.h" />
   </ItemGroup>

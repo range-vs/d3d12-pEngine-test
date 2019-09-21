@@ -2,6 +2,7 @@
 
 // c++
 #include <algorithm>
+#include <vector>
 
 // math library
 #include "MathExcep.h"

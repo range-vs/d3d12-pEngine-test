@@ -69,8 +69,7 @@ namespace gmath
 		Matrix_2 operator--(int);
 		Matrix_2& operator--();
 	  
-	// методы
-	// абстрактные
+		// методы
 		void identity();
 		void transponse();
 		void inverse();
@@ -78,14 +77,16 @@ namespace gmath
 		void reverse();
 		std::string c_str();
 		std::wstring c_wstr();
+		std::vector<T> toArray();
+		std::vector<std::vector<T>> toMatrixArray();
 
-		// аналоги абстрактных методов
+
+		// методы статические
 		Matrix_2 Identity();
 		Matrix_2 Transponse(const Matrix_2<T>& m);
 		Matrix_2 Inverse(const Matrix_2<T>& m);
 		Matrix_2 Reverse(const Matrix_2<T>& m);
 		float Determinant(const Matrix_2<T>& m);
-
 	};
 
 	// конструкторы
@@ -521,7 +522,27 @@ namespace gmath
 		return buf.str();
 	}
 
-	// аналоги абстарктных методов
+	template<class T>
+	inline std::vector<T> gmath::Matrix_2<T>::toArray()
+	{
+		return std::vector<T>
+		{
+			this->matrix[0][0], this->matrix[0][1], 
+			this->matrix[1][0], this->matrix[1][1] 
+		};
+	}
+
+	template<class T>
+	inline std::vector<std::vector<T>> gmath::Matrix_2<T>::toMatrixArray()
+	{
+		return std::vector<std::vector<T>>
+		{
+			{ this->matrix[0][0], this->matrix[0][1]},
+			{ this->matrix[1][0], this->matrix[1][1] }
+		};
+	}
+
+	// методы статические
 
 	template<class T>
 	inline Matrix_2<T> gmath::Matrix_2<T>::Identity()

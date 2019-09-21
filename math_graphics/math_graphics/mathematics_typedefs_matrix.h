@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
+#include <vector>
 
 // объ€влени€ всех классов
 namespace gmath

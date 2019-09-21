@@ -25,6 +25,7 @@ struct PiplineStateObjectProperties
 	wstring vsPath;
 	wstring psPath;
 	vector<wstring> cBuffNames;
+	vector<wstring> sBuffNames;
 };
 
 
@@ -93,6 +94,20 @@ public:
 						}
 					);
 					copy(results.begin(), results.end(), back_inserter(psoProp.cBuffNames));
+					return true;
+				}
+			},
+			{
+				L"sBuffers", [](PiplineStateObjectProperties& psoProp, const wstring& data)
+				{
+					wregex regular(L"\\s+");
+					vector<wstring> results;
+					for_each(wsregex_token_iterator(data.begin(), data.end(), regular, -1), wsregex_token_iterator(), [&results](const wstring& data)
+						{
+							results.push_back(regex_replace(data, wregex(L"^ +| +$|( ) +"), L""));
+						}
+					);
+					copy(results.begin(), results.end(), back_inserter(psoProp.sBuffNames));
 					return true;
 				}
 			},

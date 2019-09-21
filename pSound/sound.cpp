@@ -10,7 +10,7 @@ void SoundDevice::destroy()
 	ALFWShutdown();
 }
 
-bool SoundDevice::init(const Vector3& p, const Vector3& d, const Vector3& h)
+bool SoundDevice::init(const Vector3& p, const Vector3& d, const Vector3& h, float volumeDevice)
 {
 	ALFWInit();
 	if (!ALFWInitOpenAL())
@@ -18,7 +18,7 @@ bool SoundDevice::init(const Vector3& p, const Vector3& d, const Vector3& h)
 		//destroy();
 		return false;
 	}
-	if (!Listener::getInstance()->init(p, d, h))
+	if (!Listener::getInstance()->init(p, d, h, volumeDevice))
 		return false;
 	return true;
 }
@@ -126,12 +126,12 @@ void SoundDevice::setVolumeDevice(float v)
 
 std::shared_ptr<Listener> Listener::instance(nullptr);
 
-bool Listener::init(const Vector3& p, const Vector3& d, const Vector3& h)
+bool Listener::init(const Vector3& p, const Vector3& d, const Vector3& h, float volumeDevice)
 {
 	// устанавливаем позицию слушателя
 	fill(camSpeed.begin(), camSpeed.end(), 0.f);
 	updatePosition(p, d, h);
-	setVolumeDevice(5.f); // default volume
+	setVolumeDevice(volumeDevice); // default volume device
 	return true;
 }
 

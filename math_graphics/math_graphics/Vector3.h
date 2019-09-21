@@ -89,13 +89,13 @@ namespace gmath
 		friend const Vector_3<T1>operator-(const Vector_3<T1>& v);
 
 		// методы
-		// абстрактные методы
-		float length();
 		void normalize();
 		void inverse();
 		void identity();
 		std::string c_str();
 		std::wstring c_wstr();
+		T length();
+		std::vector<T> toArray();
 
 		// основные
 		static float Length(const Vector_3<T>& v);
@@ -124,8 +124,6 @@ namespace gmath
 		void vector3TransformNormal(const Matrix_4<T>& m);
 		Vector_3 vector3TransformNormal(const Vector_3<T>& v, const Matrix_4<T>& m);
 
-		// возврат массива
-		void toArray(T* arr);
 	};
 
 	// конструкторы
@@ -478,7 +476,7 @@ namespace gmath
 	// абстрактные методы
 
 	template<class T>
-	inline float Vector_3<T>::length()
+	inline T Vector_3<T>::length()
 	{
 		return sqrtf(powf(this->x, 2) + powf(this->y, 2) + powf(this->z, 2));
 	}
@@ -680,10 +678,9 @@ namespace gmath
 
 	// возвращаем массив
 	template<class T>
-	inline void gmath::Vector_3<T>::toArray(T* arr)
+	inline std::vector<T> gmath::Vector_3<T>::toArray()
 	{
-		arr[0] = this->x;
-		arr[1] = this->y;
-		arr[2] = this->z;
+		return { this->x,  this->y, this->z };
 	}
+
 }

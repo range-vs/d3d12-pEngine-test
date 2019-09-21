@@ -70,7 +70,6 @@ namespace gmath
 		Matrix_4& operator--();
 
 		// методы
-		// абстрактные
 		void identity();
 		void transponse();
 		void inverse();
@@ -78,8 +77,10 @@ namespace gmath
 		void reverse();
 		std::string c_str();
 		std::wstring c_wstr();
+		std::vector<T> toArray();
+		std::vector<std::vector<T>> toMatrixArray();
 
-		// статические аналоги абстрактных методов
+		// методы статические
 		static Matrix_4 Identity();
 		static Matrix_4 Transponse(const Matrix_4<T>& m);
 		static Matrix_4 Inverse(const Matrix_4<T>& m);
@@ -656,7 +657,31 @@ namespace gmath
 		return buf.str();
 	}
 
-	// аналоги абстрактных методов
+	template<class T>
+	inline std::vector<T> gmath::Matrix_4<T>::toArray()
+	{
+		return std::vector<T>
+		{
+			this->matrix[0][0], this->matrix[0][1], this->matrix[0][2], this->matrix[0][3],
+			this->matrix[1][0], this->matrix[1][1], this->matrix[1][2], this->matrix[1][3],
+			this->matrix[2][0], this->matrix[2][1], this->matrix[2][2], this->matrix[2][3],
+			this->matrix[3][0], this->matrix[3][1], this->matrix[3][2], this->matrix[3][3],
+		};
+	}
+
+	template<class T>
+	inline std::vector<std::vector<T>> gmath::Matrix_4<T>::toMatrixArray()
+	{
+		return std::vector<std::vector<T>>
+		{
+			{ this->matrix[0][0], this->matrix[0][1], this->matrix[0][2], this->matrix[0][3]},
+			{ this->matrix[1][0], this->matrix[1][1], this->matrix[1][2], this->matrix[1][3] },
+			{ this->matrix[2][0], this->matrix[2][1], this->matrix[2][2], this->matrix[2][3] },
+			{ this->matrix[3][0], this->matrix[3][1], this->matrix[3][2], this->matrix[3][3] }
+		};
+	}
+
+	// методы статические
 	template<class T>
 	inline Matrix_4<T> gmath::Matrix_4<T>::Identity()
 	{

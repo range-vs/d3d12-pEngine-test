@@ -17,8 +17,10 @@
 #include <sstream>
 #include <regex>
 #include <set>
+#include <chrono>
 
 #include "cBufferFactory.h"
+#include "sBufferFactory.h"
 #include "PSOLoader.h"
 #include "types.h"
 
@@ -37,10 +39,10 @@ using Microsoft::WRL::ComPtr;
 #pragma comment(lib, "D3Dcompiler.lib")
 
 
-//extern "C"
-//{
-//	__declspec(dllexport) unsigned int NvOptimusEnablement;
-//}
+extern "C"
+{
+	__declspec(dllexport) unsigned int NvOptimusEnablement;
+}
 
 
 enum Sizes
@@ -83,6 +85,23 @@ public:
 	}
 
 };
+
+class ModelPosition
+{
+	MatrixCPUAndGPU world;
+	MatrixCPUAndGPU normal;
+
+public:
+	ModelPosition(const MatrixCPUAndGPU& w): world(w){}
+	void generateNormal()
+	{
+		normal = Matrix4::Transponse(Matrix4::Inverse(world.getCPUMatrix()));
+	}
+	MatrixCPUAndGPU& getWorld() { return world; }
+	MatrixCPUAndGPU& getNormals() { return normal; }
+
+};
+
 
 
 enum TypeCamera: int
@@ -208,12 +227,18 @@ public:
 		if ((mDelta[x] != 0) || (mDelta[y] != 0))
 		{
 			OutputDebugString(L"Mouse moved\n");
-			wstring out = to_wstring(mDelta[x]) + L" : " + to_wstring(mDelta[y]) + L"\n";
-			OutputDebugString(out.c_str());
-			currentProperties.camYaw += (mDelta[x] * 0.001f);
+			OutputDebugString((to_wstring(mDelta[x]) + L" " + to_wstring(mDelta[y]) + L"\n").c_str());
+
+			currentProperties.camYaw += (mDelta[x] * 0.001f); // todo?
 			currentProperties.camPitch += (mDelta[y] * 0.001f);
 			currentProperties.lastPosMouse = currentProperties.mouseCurrState;
 		}
+
+		float angle = 1.483f; // 85 градусов
+		if (currentProperties.camPitch > 0)
+			currentProperties.camPitch = min(currentProperties.camPitch, angle);
+		else
+			currentProperties.camPitch = max(currentProperties.camPitch, -angle);
 
 		Matrix4 camRotationMatrix = Matrix4::CreateRotateMatrixXYZ(currentProperties.camPitch, currentProperties.camYaw, 0);
 		camTarget = DefaultForward;
@@ -302,7 +327,7 @@ public:
 		string verison = string(type.begin(), type.end()) + "_5_0";
 		HRESULT hr = D3DCompileFromFile((path + L'.' + type).c_str(),
 			nullptr,
-			nullptr,
+			D3D_COMPILE_STANDARD_FILE_INCLUDE,
 			"main",
 			verison.c_str(),
 			D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
@@ -370,6 +395,8 @@ public:
 	}
 
 };
+
+
 
 class Texture
 {
@@ -486,13 +513,16 @@ public:
 	map<wstring, Texture>& getTexturesBuffer() { return textures; }
 };
 
+
+
 class PipelineStateObject
 {
 	ComPtr<ID3D12PipelineState> pipelineStateObject; // pso containing a pipeline state
 	ComPtr<ID3D12RootSignature> rootSignature; // root signature defines data shaders will access
 	vector< D3D12_INPUT_ELEMENT_DESC> inputLayout;
 	D3D12_INPUT_LAYOUT_DESC inputLayoutDesc;
-	set<wstring> cBufferKeys;
+	vector<wstring> cBufferKeys;
+	vector<wstring> sBufferKeys;
 
 public:
 
@@ -533,47 +563,39 @@ public:
 		//rootParameters[0].DescriptorTable = descriptorTable; // this is our descriptor table for this root parameter
 		//rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX; // our pixel shader will be the only shader accessing this parameter for now
 
-
 		// набор константных буферов
-		vector<D3D12_ROOT_DESCRIPTOR> rootCBVDescriptor(cBufferKeys.size());
-		for (int i(0); i < cBufferKeys.size(); i++)
-		{
-			rootCBVDescriptor[i].RegisterSpace = i;
-			rootCBVDescriptor[i].ShaderRegister = 0;
-		}
+		//vector<D3D12_ROOT_DESCRIPTOR> rootCBVDescriptor(cBufferKeys.size());
+		//for (int i(0); i < cBufferKeys.size(); i++)
+		//{
+		//	rootCBVDescriptor[i].RegisterSpace = i;
+		//	rootCBVDescriptor[i].ShaderRegister = i; // 0
+		//}
 
-		// пока PSO держит одну текстуру
-		CD3DX12_DESCRIPTOR_RANGE texTable;
-		texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+		//  PSO держит одну текстуру
+		CD3DX12_DESCRIPTOR_RANGE range;
+		range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // texture
 
 		// создаем массив всех буферов
 		vector<CD3DX12_ROOT_PARAMETER> slotRootParameter;
 		CD3DX12_ROOT_PARAMETER rpt;
-		rpt.InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
+		rpt.InitAsDescriptorTable(1, &range, D3D12_SHADER_VISIBILITY_PIXEL);
 		slotRootParameter.push_back(rpt);
+
 		for (int i(0); i < cBufferKeys.size(); i++)
 		{
 			CD3DX12_ROOT_PARAMETER rp;
 			rp.InitAsConstantBufferView(i);
 			slotRootParameter.push_back(rp);
 		}
+		for (int i(0); i < sBufferKeys.size(); i++)
+		{
+			CD3DX12_ROOT_PARAMETER rp;
+			rp.InitAsShaderResourceView(i+1);
+			slotRootParameter.push_back(rp);
+		}
 
 		// create a static sampler
-		/*D3D12_STATIC_SAMPLER_DESC sampler = {};
-		sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
-		sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
-		sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
-		sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
-		sampler.MipLODBias = 0;
-		sampler.MaxAnisotropy = 0;
-		sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-		sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
-		sampler.MinLOD = 0.0f;
-		sampler.MaxLOD = D3D12_FLOAT32_MAX;
-		sampler.ShaderRegister = 0;
-		sampler.RegisterSpace = 0;
-		sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;*/
-
 		auto staticSamplers = ContainerTextures::getStaticSamplers();
 
 		CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc(slotRootParameter.size(), // we have 1 root parameter
@@ -582,9 +604,14 @@ public:
 			staticSamplers.data(),
 			D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
+		ComPtr<ID3DBlob> errorBlob;
 		ComPtr<ID3DBlob> signature;
-		if (FAILED(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, nullptr)))
+		D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, errorBlob.GetAddressOf());
+		if (errorBlob != nullptr)
+		{
+			OutputDebugStringA((char*)errorBlob->GetBufferPointer());
 			return false;
+		}
 
 		if (FAILED(device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(rootSignature.GetAddressOf()))))
 			return false;
@@ -638,143 +665,20 @@ public:
 	ComPtr<ID3D12RootSignature>& getRootSignature() { return rootSignature; }
 	void addCBufferKey(const wstring& keyCB)
 	{
-		this->cBufferKeys.insert(keyCB);
+		this->cBufferKeys.push_back(keyCB);
 	}
-	set<wstring>& getCBufferKeys() { return cBufferKeys; }
+	void addSBufferKey(const wstring& keySB)
+	{
+		this->sBufferKeys.push_back(keySB);
+	}
+
+	vector<wstring>& getCBufferKeys() { return cBufferKeys; }
+	vector<wstring>& getSBufferKeys() { return sBufferKeys; }
 };
 
 using PipelineStateObjectPtr = shared_ptr< PipelineStateObject>;
 
-class Model
-{
-	ComPtr <ID3D12Resource> vertexBuffer; // a default buffer in GPU memory that we will load vertex data for our triangle into
-	ComPtr < ID3D12Resource> indexBuffer; // ind buffer
-	ComPtr<ID3D12Resource> vBufferUploadHeap;
-	ComPtr<ID3D12Resource> iBufferUploadHeap;
-	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
-	D3D12_INDEX_BUFFER_VIEW indexBufferView;
-	size_t vBufferSize;
-	size_t iBufferSize;
-	D3D12_SUBRESOURCE_DATA vertexData;
-	D3D12_SUBRESOURCE_DATA indexData;
-	size_t countIndex;
-	size_t countParts;
 
-	wstring psoKey;
-	wstring textureName;
-	vector<MatrixCPUAndGPU> worlds;
-
-public:
-	Model():vBufferSize(0)
-	{
-		vertexBufferView = {};
-		vertexData = {};
-	}
-
-	bool createModel(ComPtr<ID3D12Device>& device, BlankModel& data)
-	{
-		//initVariables(data.size());
-		textureName = data.textureName;
-		if (!createBuffer(device, data.vertexs, vertexBuffer, vBufferSize, L"reserved name vb - todo"))
-			return false;
-		if (!createUploadBuffer(device, vBufferUploadHeap, vBufferSize, vertexData, data.vertexs, L"reserved name vb upload - todo"))
-			return false;
-		countIndex = data.indexs.size();
-		if (!createBuffer(device, data.indexs, indexBuffer, iBufferSize, L"reserved name ib - todo"))
-			return false;
-		if (!createUploadBuffer(device, iBufferUploadHeap, iBufferSize, indexData, data.indexs, L"reserved name ib upload - todo"))
-			return false;
-		psoKey = data.psoName;
-		return true;
-	}
-
-	/*void initVariables(size_t s)
-	{
-		countParts = s;
-		vertexBuffer.resize(s);
-		indexBuffer.resize(s);
-		vBufferUploadHeap.resize(s);
-		iBufferUploadHeap.resize(s);
-		vertexBufferView.resize(s);
-		indexBufferView.resize(s);
-		vBufferSize.resize(s);
-		iBufferSize.resize(s);
-		vertexData.resize(s);
-		indexData.resize(s);
-		countIndex.resize(s);
-	}*/
-
-	template<class TypeBuffer>
-	bool createBuffer(ComPtr<ID3D12Device>& device, vector< TypeBuffer>& buff, ComPtr < ID3D12Resource>& buffGpu, size_t& buffSize, const wstring& name)
-	{
-		buffSize = sizeof(TypeBuffer) * buff.size();
-		if (FAILED(device->CreateCommittedResource(
-			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), // a default heap
-			D3D12_HEAP_FLAG_NONE, // no flags
-			&CD3DX12_RESOURCE_DESC::Buffer(buffSize), // resource description for a buffer
-			D3D12_RESOURCE_STATE_COPY_DEST, // we will start this heap in the copy destination state since we will copy data
-											// from the upload heap to this heap
-			nullptr, // optimized clear value must be null for this type of resource. used for render targets and depth/stencil buffers
-			IID_PPV_ARGS(buffGpu.GetAddressOf()))))
-			return false;
-		// we can give resource heaps a name so when we debug with the graphics debugger we know what resource we are looking at
-		buffGpu->SetName(name.c_str());
-		return true;
-	}
-
-	template<class TypeBuffer>
-	bool createUploadBuffer(ComPtr<ID3D12Device>& device, ComPtr<ID3D12Resource>& uploadBuffer, size_t& sizeBuffer, D3D12_SUBRESOURCE_DATA& subData, 
-		vector<TypeBuffer>& buff, const wstring& name)
-	{
-		if (FAILED(device->CreateCommittedResource(
-			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), // upload heap
-			D3D12_HEAP_FLAG_NONE, // no flags
-			&CD3DX12_RESOURCE_DESC::Buffer(sizeBuffer), // resource description for a buffer
-			D3D12_RESOURCE_STATE_GENERIC_READ, // GPU will read from this buffer and copy its contents to the default heap
-			nullptr,
-			IID_PPV_ARGS(uploadBuffer.GetAddressOf()))))
-			return false;
-		uploadBuffer->SetName(name.c_str());
-
-		// store vertex buffer in upload heap
-		subData.pData = reinterpret_cast<BYTE*>(buff.data()); // Point2er to our vertex array
-		subData.RowPitch = sizeBuffer; // size of all our triangle vertex data
-		subData.SlicePitch = sizeBuffer; // also the size of our triangle vertex data
-		return true;
-	}
-
-	void createVertexBufferView()
-	{
-		vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
-		vertexBufferView.StrideInBytes = sizeof(Vertex);
-		vertexBufferView.SizeInBytes = vBufferSize;
-	}
-
-	void createIndexBufferView()
-	{
-		indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
-		indexBufferView.Format = DXGI_FORMAT_R32_UINT;
-		indexBufferView.SizeInBytes = iBufferSize;
-	}
-
-	ComPtr < ID3D12Resource>& getVertexBuffer() { return vertexBuffer; }
-	ComPtr < ID3D12Resource>& getUploadVertexBuffer() { return vBufferUploadHeap; }
-	ComPtr < ID3D12Resource>& getIndexBuffer() { return indexBuffer; }
-	ComPtr < ID3D12Resource>& getUploadIndexBuffer() { return iBufferUploadHeap; }
-	D3D12_SUBRESOURCE_DATA& getSubresourceVertexData() { return vertexData; }
-	D3D12_SUBRESOURCE_DATA& getSubresourceIndexData() { return indexData; }
-	D3D12_VERTEX_BUFFER_VIEW& getVertexBufferView() { return vertexBufferView; }
-	D3D12_INDEX_BUFFER_VIEW& getIndexBufferView() { return indexBufferView; }
-	size_t& getCountIndex() {return countIndex;}
-	void addWorld(const Matrix4& m) { MatrixCPUAndGPU _m(m); worlds.push_back(_m); }
-	void addWorld(const MatrixCPUAndGPU& m) { worlds.push_back(m); }
-	vector<MatrixCPUAndGPU>& getWorlds() { return worlds; }
-	size_t& getCountParts() { return countParts; }
-	wstring& getPsoKey() { return psoKey; }
-	wstring& getTextureName() { return textureName; }
-};
-
-using ModelPtr = shared_ptr<Model>;
 
 class FPSCounter;
 
@@ -825,6 +729,11 @@ public:
 	bool isSecond_1_100() const
 	{
 		return allTime >= 10.f;
+	}
+
+	bool isSecond_1_1000() const
+	{
+		return allTime >= 1.f;
 	}
 
 	float getCurrentTime()
@@ -883,6 +792,510 @@ public:
 		return *this;
 	}
 };
+
+
+
+
+class Light
+{
+protected:
+	Color color;
+
+public:
+	Light() :color() {}
+	Light(const Color& c) :color(c) {}
+	Color& getColor() { return color; }
+	void setColor(const Color& c) { color = c; }
+};
+
+class LightDirection : public Light
+{
+	Vector dir;
+
+public:
+	LightDirection() :Light(), dir() {}
+	LightDirection(const Color& c, const Vector& d) :Light(c), dir(d) {}
+	Vector& getDirection() { return dir; }
+	void setDirection(const Vector& d) { dir = d; }
+};
+
+class LightPoint : public Light
+{
+	Vector pos;
+
+public:
+	LightPoint() : Light(), pos() {}
+	LightPoint(const Color& c, const Vector& p) :Light(c), pos(p) {}
+	Vector& getPosition() { return pos; }
+	void setPosition(const Vector& p) { pos = p; }
+};
+
+class LightSpot : public Light
+{
+	Vector pos;
+	Vector dir;
+	float cutOff;
+	float outerCutOff;
+
+public:
+	LightSpot() : Light(), pos(), dir(), cutOff(0.f), outerCutOff(0.f) {}
+	LightSpot(const Color& c, const Vector& p, const Vector& d, float coff, float outerCutOff) :Light(c), pos(p), dir(d), cutOff(coff), outerCutOff(outerCutOff) {}
+	Vector& getPosition() { return pos; }
+	void setPosition(const Vector& p) { pos = p; }
+	Vector& getDirection() { return dir; }
+	void setDirection(const Vector& d) { dir = d; }
+	float& getCutOff() { return cutOff; }
+	void setCutOff(float coff) { cutOff = coff; }
+	float& getOuterCutOff() { return outerCutOff; }
+	void setOuterCutOff(float outerCutOff) { this->outerCutOff = outerCutOff; }
+};
+
+
+
+
+class Sun
+{
+	LightDirection light;
+	Vector position;
+	SystemTimer updater;
+	Matrix rotate;
+	float angle;
+	int wait;
+	int currentWait;
+	wstring modelSun;
+	Vector center;
+
+	bool isStop()
+	{
+		if (currentWait == 0)
+			return true;
+		if (updater.isSecond())
+		{
+			--currentWait;
+			updater.setBeforeTime();
+		}
+		return false;
+	}
+public:
+	void init(const Color& c, const Vector& p, int w)
+	{
+		position = p;
+		center = { 0,0,0,0 };
+		light = LightDirection(c, Vector::createVectorForDoublePoints(position, center));
+		rotate = Matrix::Identity();
+		updater.start();
+		updater.setBeforeTime();
+		wait = w;
+		currentWait = 0;
+	}
+
+	Matrix update(bool& status)
+	{
+		status = false;
+		Matrix newPosSun = Matrix::Identity();
+		updater.setAfterTime();
+		if (!isStop())
+		{
+			return Matrix::Identity();
+		}
+		if (updater.isSecond_1_100())
+		{
+			updater.setBeforeTime();
+			angle += 0.2f;
+			if (angle > 180)
+			{
+				angle = 0;
+				currentWait = wait;
+				//return; // расскомментировать, чтобы солнце замирало в конце
+			}
+			rotate = Matrix::CreateRotateMatrixZ(GeneralMath::degreesToRadians(-angle));
+			newPosSun = Matrix::CreateTranslationMatrixXYZ(position[x], position[y], position[z]) * rotate;
+			Vector v = position * rotate;
+			light.setDirection(Vector::createVectorForDoublePoints(v, center));
+			status = true;
+		}
+		return newPosSun;
+	}
+
+	LightDirection& getLightSun() { return light; }
+
+	void setModel(const wstring& s) { modelSun = s; }
+
+	wstring& getNameModel() { return modelSun; }
+
+	Vector& getStartPosition() { return position; }
+};
+
+class Torch
+{
+	bool _enable;
+	bool _used;
+	LightSpot light;
+public:
+	void init(const Color& c, const Vector& p, const Vector& d, float coff, float outerCutOff)
+	{
+		light = LightSpot(c, p, d, cos(GeneralMath::degreesToRadians(coff)), cos(GeneralMath::degreesToRadians(outerCutOff)));
+	}
+
+	void update(const Vector& camPos, const Vector& camDir)
+	{
+		light.setPosition(camPos);
+		light.setDirection(Vector::Normalize(camDir));
+	}
+
+	void enable()
+	{
+		_enable = true;
+	}
+	void disable()
+	{
+		_enable = false;
+	}
+	bool isEnable() { return _enable; }
+	LightSpot& getLight() { return light; }
+	void torchUsed(bool use) { _used = use; }
+	bool isTorchUsed() { return _used; }
+};
+
+struct GameParameters
+{
+	map<wstring, CBufferGeneralPtr>* cBuffers;
+	Camera* camera;
+	Sun* sunLight;
+	LightPoint* lightCenter;
+	Torch* torch; 
+	size_t* countAllCb;
+	Matrix view;
+	Matrix proj;
+	size_t frameIndex;
+	Vector torchProperty;
+
+	GameParameters() {}
+};
+
+
+class Model;
+
+using ModelPtr = shared_ptr<Model>;
+
+class Model
+{
+protected:
+	ComPtr <ID3D12Resource> vertexBuffer;
+	ComPtr < ID3D12Resource> indexBuffer;
+	ComPtr<ID3D12Resource> vBufferUploadHeap;
+	ComPtr<ID3D12Resource> iBufferUploadHeap;
+	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+	D3D12_INDEX_BUFFER_VIEW indexBufferView;
+	size_t vBufferSize;
+	size_t iBufferSize;
+	D3D12_SUBRESOURCE_DATA vertexData;
+	D3D12_SUBRESOURCE_DATA indexData;
+
+	wstring psoKey;
+
+	vector< size_t> countIndex;
+	vector<wstring> texturesKey;
+	static wstring _color;
+public:
+	virtual bool createModel(ComPtr<ID3D12Device>& device, BlankModel& data) = 0;
+	virtual void draw(ComPtr < ID3D12GraphicsCommandList>& commandList, map<wstring, CBufferGeneralPtr>& cBuffers, ContainerTextures& textures,
+		int frameIndex, size_t& countAllCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) = 0;
+
+	template<class TypeBuffer>
+	bool createBuffer(ComPtr<ID3D12Device>& device, vector< TypeBuffer>& buff, ComPtr < ID3D12Resource>& buffGpu, size_t& buffSize, const wstring& name)
+	{
+		buffSize = sizeof(TypeBuffer) * buff.size();
+		if (FAILED(device->CreateCommittedResource(
+			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), // a default heap
+			D3D12_HEAP_FLAG_NONE, // no flags
+			&CD3DX12_RESOURCE_DESC::Buffer(buffSize), // resource description for a buffer
+			D3D12_RESOURCE_STATE_COPY_DEST, // we will start this heap in the copy destination state since we will copy data
+											// from the upload heap to this heap
+			nullptr, // optimized clear value must be null for this type of resource. used for render targets and depth/stencil buffers
+			IID_PPV_ARGS(buffGpu.GetAddressOf()))))
+			return false;
+		// we can give resource heaps a name so when we debug with the graphics debugger we know what resource we are looking at
+		buffGpu->SetName(name.c_str());
+		return true;
+	}
+
+
+	template<class TypeBuffer>
+	bool createUploadBuffer(ComPtr<ID3D12Device>& device, ComPtr<ID3D12Resource>& uploadBuffer, size_t& sizeBuffer, D3D12_SUBRESOURCE_DATA& subData,
+		vector<TypeBuffer>& buff, const wstring& name)
+	{
+		if (FAILED(device->CreateCommittedResource(
+			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), // upload heap
+			D3D12_HEAP_FLAG_NONE, // no flags
+			&CD3DX12_RESOURCE_DESC::Buffer(sizeBuffer), // resource description for a buffer
+			D3D12_RESOURCE_STATE_GENERIC_READ, // GPU will read from this buffer and copy its contents to the default heap
+			nullptr,
+			IID_PPV_ARGS(uploadBuffer.GetAddressOf()))))
+			return false;
+		uploadBuffer->SetName(name.c_str());
+
+		// store vertex buffer in upload heap
+		subData.pData = reinterpret_cast<BYTE*>(buff.data()); // Point2er to our vertex array
+		subData.RowPitch = sizeBuffer; // size of all our triangle vertex data
+		subData.SlicePitch = sizeBuffer; // also the size of our triangle vertex data
+		return true;
+	}
+
+	virtual void createVertexBufferView() = 0;
+	virtual void createIndexBufferView() = 0;
+	virtual void translationBufferForHeapGPU(ComPtr < ID3D12GraphicsCommandList>& commandList) = 0;
+	virtual wstring& getPsoKey() = 0;
+	virtual void updateConstantBuffers(const GameParameters& gameParameters) = 0;
+
+	virtual void addWorld(Matrix m) {}
+	virtual void addWorld(MatrixCPUAndGPU m) {}
+	virtual void editWorld(Matrix m, size_t index) {}
+	virtual void editWorld(MatrixCPUAndGPU m, size_t index) {}
+
+	static wstring isColor() { return _color; }
+};
+
+wstring Model::_color(L"--");
+
+class ModelIdentity: public Model
+{
+	vector<ModelPosition> worlds;
+
+public:
+	ModelIdentity()
+	{
+		vBufferSize = 0;
+		vertexBufferView = {};
+		vertexData = {};
+	}
+
+	bool createModel(ComPtr<ID3D12Device>& device, BlankModel& data) override
+	{
+		if (!createBuffer(device, data.vertexs, vertexBuffer, vBufferSize, L"reserved name vb - todo"))
+			return false;
+		if (!createUploadBuffer(device, vBufferUploadHeap, vBufferSize, vertexData, data.vertexs, L"reserved name vb upload - todo"))
+			return false;
+		if (!createBuffer(device, data.indexs, indexBuffer, iBufferSize, L"reserved name ib - todo"))
+			return false;
+		if (!createUploadBuffer(device, iBufferUploadHeap, iBufferSize, indexData, data.indexs, L"reserved name ib upload - todo"))
+			return false;
+		countIndex = data.shiftIndexs;
+		psoKey = data.psoName;
+		texturesKey = data.textureName;
+		return true;
+	}
+
+	void createVertexBufferView() override
+	{
+		vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+		vertexBufferView.StrideInBytes = sizeof(Vertex);
+		vertexBufferView.SizeInBytes = vBufferSize;
+	}
+
+	void createIndexBufferView() override
+	{
+		indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
+		indexBufferView.Format = DXGI_FORMAT_R32_UINT;
+		indexBufferView.SizeInBytes = iBufferSize;
+	}
+
+	void translationBufferForHeapGPU(ComPtr < ID3D12GraphicsCommandList>& commandList) override
+	{
+		UpdateSubresources(commandList.Get(), vertexBuffer.Get(), vBufferUploadHeap.Get(), 0, 0, 1, &vertexData);
+		commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer.Get(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+
+		UpdateSubresources(commandList.Get(), indexBuffer.Get(), iBufferUploadHeap.Get(), 0, 0, 1, &indexData);
+		commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(indexBuffer.Get(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+	}
+
+	void draw(ComPtr < ID3D12GraphicsCommandList>& commandList, map<wstring, CBufferGeneralPtr>& cBuffers, ContainerTextures& textures,
+		int frameIndex, size_t& countAllCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) override
+	{
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
+		commandList->IASetVertexBuffers(0, 1, &vertexBufferView); // set the vertex buffer (using the vertex buffer view)
+		commandList->IASetIndexBuffer(&indexBufferView);
+		for (size_t j(0); j < worlds.size(); j++)
+		{
+			commandList->SetGraphicsRootConstantBufferView(1, cBuffers[L"cbCamera"]->getConstantBufferUploadHeap(frameIndex, countAllCb));
+			commandList->SetGraphicsRootConstantBufferView(2, cBuffers[L"cbLight"]->getConstantBufferUploadHeap(frameIndex, countAllCb));
+
+			countAllCb++;
+			size_t startIndex(0);
+			for (int i(0); i < texturesKey.size(); i++)
+			{
+				Texture* texture(nullptr);
+				if(texturesKey[i] != isColor() && textures.getTexture(texturesKey[i], &texture))
+				{
+					CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+					//CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+					auto textureSrvIndex = texture->getIndexSrvHeap();
+					tex.Offset(textureSrvIndex, mCbvSrvDescriptorSize);
+					commandList->SetGraphicsRootDescriptorTable(0, tex);
+				}
+				commandList->DrawIndexedInstanced(countIndex[i], 1, startIndex, 0, 0);
+				startIndex += countIndex[i];
+			}
+		}
+	}
+
+	wstring& getPsoKey() override { return psoKey; }
+
+	void updateConstantBuffers(const GameParameters& gameParameters)override
+	{
+		size_t countWorlds = worlds.size();
+		for (size_t j(0); j < countWorlds; j++)
+		{
+			cbufferCamera cbCam(worlds.at(j).getWorld().getGPUMatrix(), gameParameters.view, gameParameters.proj);
+			gameParameters.cBuffers->at(L"cbCamera")->updateData(cbCam, gameParameters.frameIndex, *gameParameters.countAllCb);
+
+			cbufferLight cbDirLight(gameParameters.sunLight->getLightSun().getColor(), gameParameters.sunLight->getLightSun().getDirection(),
+				gameParameters.lightCenter->getColor(), gameParameters.lightCenter->getPosition(), (Vector)gameParameters.camera->getPosition(),
+				worlds.at(j).getNormals().getGPUMatrix(),
+				gameParameters.torch->getLight().getColor(), gameParameters.torch->getLight().getDirection(), gameParameters.torch->getLight().getPosition(),
+				gameParameters.torchProperty);
+
+			gameParameters.cBuffers->at(L"cbLight")->updateData(cbDirLight, gameParameters.frameIndex, *gameParameters.countAllCb);
+
+			(*gameParameters.countAllCb)++;
+		}
+	}
+
+	void addWorld(Matrix m)override { ModelPosition _m(m);  worlds.push_back(_m); }
+	void addWorld(MatrixCPUAndGPU m)override { ModelPosition _m(m);  worlds.push_back(_m); }
+	void editWorld(Matrix m, size_t index)override { ModelPosition _m(m);  worlds[index] = _m; }
+	void editWorld(MatrixCPUAndGPU m, size_t index)override { ModelPosition _m(m);  worlds[index] = _m; }
+};
+
+class ModelInstancing : public Model
+{
+	map<wstring, SBufferGeneralPtr> sBuffers;
+
+	size_t countInstance;
+
+public: 
+	ModelInstancing()
+	{
+		vBufferSize = 0;
+		vertexBufferView = {};
+		vertexData = {};
+	}
+
+	template<class TypeData>
+	bool addStructuredBuffer(ComPtr<ID3D12Device> & device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering, 
+		const wstring& name, TypeData& strBufferData)
+	{
+		SBufferGeneralPtr buffer(new SBufferGeneral);
+		if (!buffer->initStructuredBuffer(device, mainDescriptorHeap, buffering, L"structured buffer " + name, strBufferData))
+			return false;
+		sBuffers.insert({ name, buffer });
+	}
+
+	void setCountInstanced(size_t inst)
+	{
+		countInstance = inst;
+	}
+
+	bool createModel(ComPtr<ID3D12Device>& device, BlankModel& data) override
+	{
+		if (!createBuffer(device, data.vertexs, vertexBuffer, vBufferSize, L"reserved name vb - todo"))
+			return false;
+		if (!createUploadBuffer(device, vBufferUploadHeap, vBufferSize, vertexData, data.vertexs, L"reserved name vb upload - todo"))
+			return false;
+		if (!createBuffer(device, data.indexs, indexBuffer, iBufferSize, L"reserved name ib - todo"))
+			return false;
+		if (!createUploadBuffer(device, iBufferUploadHeap, iBufferSize, indexData, data.indexs, L"reserved name ib upload - todo"))
+			return false;
+		countIndex = data.shiftIndexs;
+		psoKey = data.psoName;
+		texturesKey = data.textureName;
+		return true;
+	}
+
+	void createVertexBufferView() override
+	{
+		vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+		vertexBufferView.StrideInBytes = sizeof(Vertex);
+		vertexBufferView.SizeInBytes = vBufferSize;
+	}
+
+	void createIndexBufferView() override
+	{
+		indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
+		indexBufferView.Format = DXGI_FORMAT_R32_UINT;
+		indexBufferView.SizeInBytes = iBufferSize;
+	}
+
+	void translationBufferForHeapGPU(ComPtr < ID3D12GraphicsCommandList>& commandList) override
+	{
+		UpdateSubresources(commandList.Get(), vertexBuffer.Get(), vBufferUploadHeap.Get(), 0, 0, 1, &vertexData);
+		commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer.Get(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+
+		UpdateSubresources(commandList.Get(), indexBuffer.Get(), iBufferUploadHeap.Get(), 0, 0, 1, &indexData);
+		commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(indexBuffer.Get(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+	}
+
+	void draw(ComPtr < ID3D12GraphicsCommandList>& commandList, map<wstring, CBufferGeneralPtr>& cBuffers, ContainerTextures& textures,
+		int frameIndex, size_t& countAllCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) override
+	{
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
+		commandList->IASetVertexBuffers(0, 1, &vertexBufferView); // set the vertex buffer (using the vertex buffer view)
+		commandList->IASetIndexBuffer(&indexBufferView);
+
+		commandList->SetGraphicsRootConstantBufferView(1, cBuffers[L"cbCamera"]->getConstantBufferUploadHeap(frameIndex, countAllCb));
+		commandList->SetGraphicsRootConstantBufferView(2, cBuffers[L"cbLight"]->getConstantBufferUploadHeap(frameIndex, countAllCb));
+		commandList->SetGraphicsRootShaderResourceView(3, sBuffers[L"sbInstancedPosition"]->getConstantBufferUploadHeap(frameIndex)); // продумать структуру соответствия
+
+		countAllCb++;
+		size_t startIndex(0);
+		for (int i(0); i < texturesKey.size(); i++)
+		{
+			Texture* texture(nullptr);
+			if (texturesKey[i] != isColor() && textures.getTexture(texturesKey[i], &texture))
+			{
+				CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+				//CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+				auto textureSrvIndex = texture->getIndexSrvHeap();
+				tex.Offset(textureSrvIndex, mCbvSrvDescriptorSize);
+				commandList->SetGraphicsRootDescriptorTable(0, tex);
+			}
+			commandList->DrawIndexedInstanced(countIndex[i], countInstance, startIndex, 0, 0);
+			startIndex += countIndex[i];
+		}
+	}
+
+	void updateConstantBuffers(const GameParameters& gameParameters)override
+	{
+		cbufferCamera cbCam(Matrix::Identity(), gameParameters.view, gameParameters.proj);
+		gameParameters.cBuffers->at(L"cbCamera")->updateData(cbCam, gameParameters.frameIndex, *gameParameters.countAllCb);
+
+		cbufferLight cbDirLight(gameParameters.sunLight->getLightSun().getColor(), gameParameters.sunLight->getLightSun().getDirection(),
+			gameParameters.lightCenter->getColor(), gameParameters.lightCenter->getPosition(), (Vector)gameParameters.camera->getPosition(),
+			Matrix::Identity(),
+			gameParameters.torch->getLight().getColor(), gameParameters.torch->getLight().getDirection(), gameParameters.torch->getLight().getPosition(),
+			gameParameters.torchProperty);
+
+		gameParameters.cBuffers->at(L"cbLight")->updateData(cbDirLight, gameParameters.frameIndex, *gameParameters.countAllCb);
+
+		(*gameParameters.countAllCb)++;
+	}
+
+
+	wstring& getPsoKey() override { return psoKey; }
+
+	// продумать обновление?
+	/*void addWorld(Matrix m)override { ModelPosition _m(m);  worlds.push_back(_m); }
+	void addWorld(MatrixCPUAndGPU m)override { ModelPosition _m(m);  worlds.push_back(_m); }
+	void editWorld(Matrix m, size_t index)override { ModelPosition _m(m);  worlds[index] = _m; }
+	void editWorld(MatrixCPUAndGPU m, size_t index)override { ModelPosition _m(m);  worlds[index] = _m; }*/
+};
+
+
+
 
 class GraphicOutput
 {
@@ -959,6 +1372,62 @@ public:
 	void setUsingFeatureLevel(size_t i) { usingFeatureLevel = supportedFeatureLevels[i]; }
 };
 
+
+// debug //
+
+struct VertexNormal
+{
+	Point Pos;
+	Point Texture;
+	Point Normal;
+
+	VertexNormal() : Texture(), Normal(), Pos(){  }
+	VertexNormal(float x, float y, float z) :Pos(Point(x, y, z)), Texture(), Normal() {  }
+	VertexNormal(const Point& p, const Point& t, const Point& n) : Pos(p), Texture(t), Normal(n) {  }
+};
+
+struct BoundingBoxData // данные для создания BBox
+{
+	float xl, yd, zf; // лево, низ и перед
+	float xr, yu, zr; // право, верх и зад
+	Vector center; // центр модели
+
+	BoundingBoxData(float xl, float yd, float zf, float xr, float yu, float zr) :xl(xl), yd(yd), zf(zf), xr(xr), yu(yu), zr(zr) {}
+	BoundingBoxData() :xl(0), yd(0), zf(0), xr(0), yu(0), zr(0) {}
+};
+
+struct DataFromFile // структура, возвращаемая при загрузке файла
+{
+	std::vector<wstring> texturesListOut; // выходной список текстур для модели
+	std::vector< VertexNormal> vertex; // массив вершин
+	size_t vertexCount; // количество вершин
+	std::vector<WORD> index; // массив индексов
+	size_t indexCount; // количество индексов
+	std::vector<wstring> shaders;
+	BoundingBoxData bboxData; // крайние точки BBox
+	bool isBBox; // есть ли данные ббокса
+	bool isInstansing; // инстансинговая ли модель
+
+	DataFromFile() :vertexCount(0), isBBox(false) {}
+	DataFromFile(const std::vector<wstring>& tLO, const std::vector< VertexNormal>& v, size_t vC, const std::vector<WORD>& i, size_t iC, const std::vector<wstring>& shaders = std::vector<wstring>(), const BoundingBoxData& bbd = BoundingBoxData());
+};
+
+struct DateTime // время и дата
+{
+	int seconds;
+	int minutes;
+	int hours;
+	int days;
+	int mounts;
+	int years;
+
+	DateTime(int s, int m, int h, int d, int mo, int y) :seconds(s), minutes(m), hours(h), days(d), mounts(mo), years(1900 + y) {}
+	DateTime() :seconds(0), minutes(0), hours(0), days(0), mounts(0), years(1900) {}
+};
+
+// debug //
+
+
 class Window
 {
 	HWND hwnd;
@@ -1014,6 +1483,7 @@ class Window
 	Color backBufferColor;
 	bool modeWindow;
 	bool isRunning;
+	bool isInit;
 	static Window* current;
 	FPSCounter fpsCounter;
 
@@ -1029,11 +1499,22 @@ class Window
 
 	shared_ptr<SoundDevice> sndDevice;
 
+	Sun sunLight;
+	LightPoint lightCenter;
+	Torch torch;
+
+	GameParameters gameParam;
+
+	// test camera timing
+	chrono::time_point<std::chrono::high_resolution_clock> timeFrameBefore;
+	chrono::time_point<std::chrono::high_resolution_clock> timeFrameAfter;
+	double countsPerSecond;
+
 public:
 
 	Window(int buffering, int vsync, bool msaaState, int w, int h, TypeCamera tc = TypeCamera::STATIC_CAMERA, bool md = false)
 	{
-		backBufferColor = { 0.53f, 0.53f, 0.53f, 1.f };
+		backBufferColor = { 0.f, 0.f, 0.f, 1.f }; // 0.53f
 		hwnd = nullptr;
 		windowName = L"dx12_className";
 		windowTitle = L"DX12 Render Triangles";
@@ -1069,6 +1550,7 @@ public:
 		mainDescriptorHeap.resize(buffering);
 		typeCamera = tc;
 		isRunning = false;
+		isInit = false;
 	}
 
 	void updateSize()
@@ -1162,13 +1644,15 @@ public:
 		{
 			if (Window::current->keyStatus.find((char)wParam) != Window::current->keyStatus.end())
 				Window::current->keyStatus[(char)wParam] = false;
+			if (!Window::current->keyStatus['L'])
+				Window::current->torch.torchUsed(false);
 			break;
 		}
 
 		case WM_SIZE:
 		{
 			Window::current->updateSize();
-			if (Window::current->device)
+			if (Window::current->isInit)
 			{
 				if (wParam == SIZE_MINIMIZED)
 				{
@@ -1222,8 +1706,8 @@ public:
 	{
 		HRESULT hr;
 
-		if (!enableDebugLayer())
-			return false;
+		//if (!enableDebugLayer())
+		//	return false;
 		if (!createFactory())
 			return false;
 		getAllGraphicAdapters();
@@ -1244,7 +1728,7 @@ public:
 			return false;
 
 		// resize
-		isRunning = true;
+		//isRunning = true;
 		if (!setProperties())
 			return false;
 		if (!changeModeDisplay())
@@ -1253,7 +1737,11 @@ public:
 			return false;
 
 		// create PSOs
-		if (!loadPSO(L"pso.pCfg"))
+		if (!loadPSO(L"engine_resource/configs/pso.pCfg"))
+			return false;
+
+		// create light
+		if (!initLight())
 			return false;
 
 		// create model
@@ -1280,6 +1768,11 @@ public:
 			return false;
 		// start snd
 		startSound();
+
+		// start!
+		initGameParam();
+		isInit = true;
+		isRunning = true;
 
 		return true;
 	}
@@ -1598,6 +2091,8 @@ public:
 
 	bool createBuffersDescriptorHeap()
 	{
+		if (textures.getSize() == 0)
+			return true;
 		for (int i = 0; i < frameBufferCount; ++i)
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -1683,30 +2178,20 @@ public:
 			PipelineStateObjectPtr _pso(new PipelineStateObject());
 			for_each(pP.cBuffNames.begin(), pP.cBuffNames.end(), [&_pso](const wstring& key)
 				{
-					_pso->getCBufferKeys().insert(key);
+					if(find(_pso->getCBufferKeys().begin(), _pso->getCBufferKeys().end(), key) == _pso->getCBufferKeys().end())
+						_pso->addCBufferKey(key);
+				}
+			);
+			for_each(pP.sBuffNames.begin(), pP.sBuffNames.end(), [&_pso](const wstring& key)
+				{
+					if (find(_pso->getSBufferKeys().begin(), _pso->getSBufferKeys().end(), key) == _pso->getSBufferKeys().end())
+						_pso->addSBufferKey(key);
 				}
 			);
 			if (!_pso->initPipelineStateObject(device, msaaState, msaaQuality, shaders, pP))
 				return false;
 			psos.insert({ pP.name, _pso });
 		}
-
-		//CBufferCreator cBCreator;
-		//shaders.addVertexShader(L"shader");
-		//shaders.addPixelShader(L"shader");
-		//cBuffers.insert({ L"cbCamera" , cBCreator.createCBuffer(L"cbCamera", device, mainDescriptorHeap, frameBufferCount) });
-		//PiplineStateObjectProperties pP;
-		//pP.inputLayouts.push_back({ "POSITION", 6, 0 });
-		//pP.inputLayouts.push_back({ "NORMAL", 6, 12 });
-		//pP.inputLayouts.push_back({ "COLOR", 6, 24 });
-		//pP.name = L"PSOModelColorNoLight";
-		//pP.number = 0;
-		//pP.vsPath = L"shader";
-		//pP.psPath = L"shader";
-		//pP.cBuffNames.push_back(L"cbCamera");
-		//if (!createPso(pP))
-		//	return false;
-
 		return true;
 	}
 
@@ -1721,8 +2206,8 @@ public:
 			{'D', false},
 			{'X', false},
 		};
-		Vector3 pos(0.f, 5.f, -8.f);
-		Vector3 dir(0.0f, 0.0f, 0.0f);
+		Vector3 pos(20.f, 5.f, -100.f);
+		Vector3 dir(25.f, 5.f, -100.f);
 		switch (typeCamera)
 		{
 		case STATIC_CAMERA:
@@ -1730,8 +2215,8 @@ public:
 			break;
 
 		case GAME_CAMERA:
-			float step(15.f);
-			float run(30.f);
+			float step(0.3f);
+			float run(0.5f);
 			camera.reset(new GameCamera(step, run, pos, dir));
 			ShowCursor(0);
 			SetCapture(hwnd);
@@ -1739,160 +2224,689 @@ public:
 			break;
 		}
 		camera->updateProjection(3.14159f / 4.f, widthClient / (FLOAT)heightClient, 0.01f, 1000.f);
+
+		LARGE_INTEGER frequencyCount;
+		QueryPerformanceFrequency(&frequencyCount);
+		countsPerSecond = double(frequencyCount.QuadPart);
+	}
+
+
+
+	Point generateNormal(const Point& a, const Point& b, const Point& c)
+	{
+		Vector p0(a);
+		Vector p1(b);
+		Vector p2(c);
+		Vector u = p1 - p0;
+		Vector v = p2 - p0;
+		Vector p = Vector::cross(u, v);
+		p = Vector::Normalize(p);
+		return (Point)p;
+	}
+
+	template<typename T, typename ...Vertexs>
+	T genereateAverageNormal(int c, T sum, Vertexs& ...vert)
+	{
+		Point s = _genereateAverageNormal(sum, vert...);
+		s *= 1.f / c;
+		return s;
+	}
+
+	template<typename T, typename... Vertexs>
+	T _genereateAverageNormal(T sum, Vertexs&... vert)
+	{
+		return sum + _genereateAverageNormal(vert...);
+	}
+
+	template<typename T>
+	T _genereateAverageNormal(T p)
+	{
+		return p;
+	}
+
+	bool loadFromFileProObject(const string& path, DataFromFile* data)
+	{
+		std::ifstream file(path, std::ios_base::binary);
+		if (!file)
+		{
+			// TODO: print error message
+			return false;
+		}
+		// переменные для модели
+		int countMesh(0); // количество мешей в модели
+		Vector center; // центр BBox
+		BoundingBoxData bBoxData; // данные для конструирования BBox
+		DataFromFile _data; // выходной буфер
+		_data.isBBox = true; // ббокс будет загружаться из файла
+
+		while (true)
+		{
+			int block(0);
+			file.read((char*)&block, 4);
+			if (file.eof())
+				break;
+			if (!file)
+			{
+				// TODO: print error message
+				return false;
+			}
+			switch (block)
+			{
+			case 0x10:// блок служебной информации
+			{
+				string nameAutor;
+				if (!loadLineFromFile(nameAutor, file)) // имя автора
+				{
+					// TODO: print error message
+					return false;
+				}
+				DateTime dateCreate;
+				file.read((char*)&dateCreate, sizeof DateTime); // дата создания
+				if (!file)
+				{
+					// TODO: print error message
+					return false;
+				}
+				DateTime dateModify;
+				file.read((char*)&dateModify, sizeof DateTime); // дата модификации
+				if (!file)
+				{
+					// TODO: print error message
+					return false;
+				}
+				file.read((char*)&countMesh, 4); // количество мешей в модели
+				if (!file)
+				{
+					// TODO: print error message
+					return false;
+				}
+				// читаем центр модели
+				float arr[6];
+				for (int i(0); i < 3; i++)
+				{
+					file.read((char*)&arr[i], sizeof(float));
+					if (!file)
+					{
+						// TODO: print error message
+						return false;
+					}
+				}
+				center = Vector(arr[0], arr[1], arr[2], 1);
+				// читаем BBox модели(ограничивающие точки)
+				for (int i(0); i < 6; i++)
+				{
+					file.read((char*)&arr[i], sizeof(float));
+					if (!file)
+					{
+						// TODO: print error message
+						return false;
+					}
+				}
+				bBoxData = BoundingBoxData(arr[0], arr[1], arr[2], arr[3], arr[4], arr[5]);
+				_data.bboxData = bBoxData;
+				_data.bboxData.center = center; // записываем центр
+				string unit;
+				if (!loadLineFromFile(unit, file)) // читаем единицы измерения
+				{
+					// TODO: print error message
+					return false;
+				}
+				break;
+			}
+
+			case 0x20: // блок информации о каждом меше в модели
+			{
+				for (int i(0); i < countMesh; i++) // перебираем все меши
+				{
+					file.read((char*)&block, 4); // id подблока
+					if (!file)
+					{
+						// TODO: print error message
+						return false;
+					}
+					string nameMesh;
+					if (!loadLineFromFile(nameMesh, file))  // читаем имя меша
+					{
+						// TODO: print error message
+						return false;
+					}
+					int ci(0); file.read((char*)&ci, 4); // читаем количество индексов
+					if (!file)
+					{
+						// TODO: print error message
+						return false;
+					}
+					_data.indexCount += ci; // приращиваем количество индексов
+					for (int j(0); j < ci; j++) // перебираем все индексы
+					{
+						int tmpIndex(-1); // временная переменная
+						file.read((char*)&tmpIndex, 4); // читаем индекс
+						if (!file)
+						{
+							// TODO: print error message
+							return false;
+						}
+						_data.index.push_back((WORD)tmpIndex); // пишем считанный индекс в буфер
+					}
+				}
+				break;
+			}
+
+			case 0x30: // блок информации о вершинах
+			{
+				file.read((char*)&_data.vertexCount, 4); // количество вершин
+				if (!file)
+				{
+					// TODO: print error message
+					return false;
+				}
+				for (int i(0); i < _data.vertexCount; i++) // перебираем все вершины
+				{
+					VertexNormal vn;// временная переменная
+					file.read((char*)&vn, sizeof(VertexNormal)); // читаем вершину
+					if (!file)
+					{
+						// TODO: print error message
+						return false;
+					}
+					_data.vertex.push_back(vn); // пишем считанную вершину в буфер
+				}
+				break;
+			}
+
+			case 0x40: // блок информации о текстурах
+			{
+				int count(0);
+				file.read((char*)&count, 4); // количество текстур
+				if (!file)
+				{
+					// TODO: print error message
+					return false;
+				}
+				_data.texturesListOut.resize(count); // создаём буфер текстур
+				for (int i(0); i < count; i++)
+				{
+					int index(0);
+					file.read((char*)&index, 4); // индекс текстуры
+					if (!file)
+					{
+						// TODO: print error message
+						return false;
+					}
+					string path;
+					if (!loadLineFromFile(path, file)) // читаем путь к текстуре
+					{
+						// TODO: print error message
+						return false;
+					}
+					_data.texturesListOut[index] = wstring(path.begin(), path.end()); // помещаем текстуру в буфер на позицию
+				}
+				break;
+			}
+
+			case 0x50: // блок настроек(пока только инстансинг или нет)
+			{
+				file.read((char*)&_data.isInstansing, sizeof(bool)); // количество текстур
+				if (!file)
+				{
+					// TODO: print error message
+					return false;
+				}
+				if (_data.isInstansing)
+					_data.shaders = { L"textures_instansing", L"textures_instansing", L"textures" };
+				else
+					_data.shaders = { L"textures" };
+				break;
+			}
+
+			default:
+			{
+				file.close();
+				return false;
+			}
+
+			}
+		}
+		file.close();
+		*data = _data;
+		return true;
+	}
+	
+	bool  loadLineFromFile(string& line, std::ifstream& file)
+	{
+		char s(' ');
+		int size(0);
+		while (true)
+		{
+			file.read((char*)&s, 1);
+			if (!file)
+			{
+				// TODO: print error message
+				return false;
+			}
+			if (s == '\0')
+				break;
+			line += s;
+		}
+		return true;
 	}
 
 
 	bool initializeSceneDirect3D() 
 	{
-		// cube color
 		array<Color, 2> colors =
 		{
 			Color(0.f, .49f, .05f, 1.f),
 			Color(0.41f, 0.24f, 0.49f, 1.f)
 		};
-		BlankModel bm;
-		bm.nameModel = L"cube color";
-		float value(5.f);
-		vector<Vector3> _v = {
-			 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
-			 Vector3(value, value, -value) ,
-			 Vector3(value, value, value),
-			 Vector3(-value, value, value),
-			 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
-			 Vector3(value, -value, -value),
-			 Vector3(value, -value, value),
-			 Vector3(-value, -value, value)
-		};
-		bm.vertexs = {
-			Vertex(_v[0],{0,0,0},  colors[1]),
-			Vertex(_v[1],{0,0,0},  colors[1]),
-			Vertex(_v[2],{0,0,0},  colors[1]),
-			Vertex(_v[3],{0,0,0},  colors[1]),
-			Vertex(_v[4],{0,0,0},  colors[1]),
-			Vertex(_v[5],{0,0,0},  colors[1]),
-			Vertex(_v[6] ,{0,0,0},  colors[1]),
-			Vertex(_v[7], {0,0,0},  colors[1])
-		};
-		bm.indexs= {
-			3,1,0,
-		2,1,3,
-		0,5,4,
-		1,5,0,
-		3,4,7,
-		0,4,3,
-		1,6,5,
-		2,6,1,
-		2,7,6,
-		3,7,2,
-		6,4,5,
-		7,4,6
-		};
-		bm.psoName = L"PSOModelColorNoLight";
-		auto world1(Matrix4::CreateTranslationMatrixXYZ(-14, 10, 0));
-		if (!createModel(bm, world1))
-			return false;
+		Matrix4 trans;
 
-		world1 = Matrix4::CreateTranslationMatrixXYZ(-28, 8, 0);
-		if (!createModel(bm, world1))
-			return false;
+		//{
+		//	// cube textures instansing
+		//	BlankModel bm;
+		//	float value = 10.f;
+		//	vector<Vector3> _v = {
+		//		 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
+		//		 Vector3(value, value, -value) ,
+		//		 Vector3(value, value, value),
+		//		 Vector3(-value, value, value),
+		//		 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
+		//		 Vector3(value, -value, -value),
+		//		 Vector3(value, -value, value),
+		//		 Vector3(-value, -value, value)
+		//	};
+		//	vector<Point> norm = {
+		//generateNormal(_v[0], _v[1], _v[4]), // near
+		//generateNormal(_v[5], _v[1], _v[2]), // right
+		//generateNormal(_v[6], _v[2], _v[3]), // far
+		//generateNormal(_v[7], _v[3], _v[0]), // left
+		//generateNormal(_v[0], _v[3], _v[2]), // top
+		//generateNormal(_v[7], _v[4], _v[5]), // bottom
+		//	};
+		//	vector<Point> real_norm = {
+		//		genereateAverageNormal(3, norm[0], norm[3], norm[4]),  // top ( против часовой, с самой нижней левой)
+		//		genereateAverageNormal(3, norm[0], norm[1], norm[4]),
+		//		genereateAverageNormal(3, norm[2], norm[1], norm[4]),
+		//		genereateAverageNormal(3, norm[2], norm[3], norm[4]),
+		//		genereateAverageNormal(3, norm[0], norm[3], norm[5]),  // bottom ( против часовой, с самой нижней левой)
+		//		genereateAverageNormal(3, norm[0], norm[1], norm[5]),
+		//		genereateAverageNormal(3, norm[2], norm[1], norm[5]),
+		//		genereateAverageNormal(3, norm[2], norm[3], norm[5]),
+		//	};
+		//	bm.vertexs = {
+		//		Vertex(_v[0], real_norm[0], {0.35f, 1.f, 0, -1}),
+		//		Vertex(_v[1], real_norm[1],{0.63f, 1.f, 0, -1}),
+		//		Vertex(_v[2],real_norm[2], {0.63f, 0.75f, 0, -1}),
+		//		Vertex(_v[3], real_norm[3],{0.35f, 0.75f, 0, -1}),
+		//		Vertex(_v[7], real_norm[7],{0.12f, 0.75f, 0, -1}),
+		//		Vertex(_v[4], real_norm[4],{0.12f, 1.f, 0, -1}),
+		//		Vertex(_v[5], real_norm[5],{0.85f, 1.f, 0, -1}),
+		//		Vertex(_v[6], real_norm[6],{0.85f, 0.75f, 0, -1}),
+		//		Vertex(_v[7], real_norm[7],{0.35f, 0.5f, 0, -1}),
+		//		Vertex(_v[6], real_norm[6],{0.63f, 0.5f, 0, -1}),
+		//		Vertex(_v[4],real_norm[4],{0.35f, 0.25f, 0, -1}),
+		//		Vertex(_v[5], real_norm[5],{0.63f, 0.25f, 0, -1}),
+		//		Vertex(_v[0],real_norm[0], {0.35f, 0.f, 0, -1}),
+		//		Vertex(_v[1], real_norm[1],{0.63f, 0.f, 0, -1})
+		//	};
+		//	bm.indexs = {
+		//		10,12,11,
+		//		11,12,13,
+		//		8,10,9,
+		//		9,10,11,
+		//		3,8,2,
+		//		2,8,9,
+		//		5,4,0,
+		//		0,4,3,
+		//		0,3,1,
+		//		1,3,2,
+		//		1,2,6,
+		//		6,2,7
+		//	};
+		//	bm.shiftIndexs.push_back(bm.indexs.size());
+		//	bm.nameModel = L"cube wood instansing";
+		//	bm.textureName.push_back(L"engine_resource/textures/pWoodDoski2.dds");
+		//	bm.psoName = L"PSOLightBlinnPhongInstansed";
+		//	vector<sbufferInstancing> worlds;
+		//	array<pair<float, float>, 4> coord = { pair<float, float>{-15.f, -15.f}, pair<float, float>{-15.f, 15.f}, pair<float, float>{15.f, -15.f}, pair<float, float>{15.f, 15.f} };
+		//	for (int i(0), y(10); i < 10000; i++, y += 30)
+		//	{
+		//		for (int j(0); j < coord.size(); j++)
+		//		{
+		//			ModelPosition world(Matrix4::CreateTranslationMatrixXYZ(coord[j].first, (float)y, coord[j].second) * Matrix::CreateTranslationMatrixXYZ(-80.f, 0.f, -200.f));
+		//			worlds.push_back({ world.getWorld().getGPUMatrix(), world.getNormals().getGPUMatrix() });
+		//		}
+		//	}
+		//	bm.instansing = true;
+		//	bm.instansingBuffer = std::move(worlds);
+		//	if (!createModel(bm))
+		//		return false;
+		//}
 
-		// plane grass
-		bm.nameModel = L"plane grass";
-		bm.textureName = L"pGrass.dds";
-		bm.indexs =
 		{
-			0, 3, 2,
-			0, 2, 1
-		};
-		bm.vertexs =
-		{
-			Vertex({-50.f,  0.f,  -50.f}, {0,0,0},  {-1,2,0,0}),
-			Vertex({50.f,  0.f,  -50.f},{0,0,0}, {2,2,0,0}),
-			Vertex({50.f,  0.f, 50.f},{0,0,0}, {2,-1,0,0}),
-			Vertex({-50.f,  0.f,  50.f},{0,0,0}, {-1,-1,0,0})
-		};
-		bm.psoName = L"PSOModelSingleTextureNoLight";
-		if (!createModel(bm))
-			return false;
-
-		// plane desc
-		bm.nameModel = L"plane wood";
-		bm.textureName = L"pWoodDesc.dds";
-		Matrix4 trans = Matrix4::CreateTranslationMatrixX(-100);
-		if (!createModel(bm, trans))
-			return false;
-
-
-		// cube desc
-		value = 2.f;
-		_v = {
-			 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
-			 Vector3(value, value, -value) ,
-			 Vector3(value, value, value),
-			 Vector3(-value, value, value),
-			 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
-			 Vector3(value, -value, -value),
-			 Vector3(value, -value, value),
-			 Vector3(-value, -value, value)
-		};
-		bm.vertexs = {
-			Vertex(_v[0], {0,0,0,0}, {0.35f, 1.f, 0}),
-			Vertex(_v[1], {0,0,0,0},{0.63f, 1.f, 0}),
-			Vertex(_v[2],{0,0,0,0}, {0.63f, 0.75f, 0}),
-			Vertex(_v[3], {0,0,0,0},{0.35f, 0.75f, 0}),
-			Vertex(_v[7], {0,0,0,0},{0.12f, 0.75f, 0}),
-			Vertex(_v[4], {0,0,0,0},{0.12f, 1.f, 0}),
-			Vertex(_v[5], {0,0,0,0},{0.85f, 1.f, 0}),
-			Vertex(_v[6], {0,0,0,0},{0.85f, 0.75f, 0}),
-			Vertex(_v[7], {0,0,0,0},{0.35f, 0.5f, 0}),
-			Vertex(_v[6], {0,0,0,0},{0.63f, 0.5f, 0}),
-			Vertex(_v[4], {0,0,0,0},{0.35f, 0.25f, 0}),
-			Vertex(_v[5], {0,0,0,0},{0.63f, 0.25f, 0}),
-			Vertex(_v[0],{0,0,0,0}, {0.35f, 0.f, 0}),
-			Vertex(_v[1], {0,0,0,0},{0.63f, 0.f, 0})
-		};
-		// generate index
-		bm.indexs = {
-			10,12,11,
-			11,12,13,
-			8,10,9,
-			9,10,11,
-			3,8,2,
-			2,8,9,
-			5,4,0,
+			// cube color
+			BlankModel bm;
+			bm.nameModel = L"cube color";
+			float value(5.f);
+			vector<Vector3> _v = {
+				 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
+				 Vector3(value, value, -value) ,
+				 Vector3(value, value, value),
+				 Vector3(-value, value, value),
+				 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
+				 Vector3(value, -value, -value),
+				 Vector3(value, -value, value),
+				 Vector3(-value, -value, value)
+			};
+			vector<Point> norm = {
+		generateNormal(_v[0], _v[1], _v[4]), // near 0
+		generateNormal(_v[5], _v[1], _v[2]), // right 1
+		generateNormal(_v[6], _v[2], _v[3]), // far 2
+		generateNormal(_v[7], _v[3], _v[0]), // left 3
+		generateNormal(_v[0], _v[3], _v[2]), // top 4 
+		generateNormal(_v[7], _v[4], _v[5]), // bottom 5
+			};
+			vector<Point> real_norm = {
+		genereateAverageNormal(3, norm[0], norm[3], norm[4]),  // top ( против часовой, с самой нижней левой)
+		genereateAverageNormal(3, norm[0], norm[1], norm[4]),
+		genereateAverageNormal(3, norm[2], norm[1], norm[4]),
+		genereateAverageNormal(3, norm[2], norm[3], norm[4]),
+		genereateAverageNormal(3, norm[0], norm[3], norm[5]),  // bottom ( против часовой, с самой нижней левой)
+		genereateAverageNormal(3, norm[0], norm[1], norm[5]),
+		genereateAverageNormal(3, norm[2], norm[1], norm[5]),
+		genereateAverageNormal(3, norm[2], norm[3], norm[5]),
+			};
+			bm.vertexs = {
+				Vertex(_v[0],real_norm[0],  colors[1]),
+				Vertex(_v[1],real_norm[1],  colors[1]),
+				Vertex(_v[2],real_norm[2],  colors[1]),
+				Vertex(_v[3],real_norm[3],  colors[1]),
+				Vertex(_v[4],real_norm[4],  colors[1]),
+				Vertex(_v[5],real_norm[5],  colors[1]),
+				Vertex(_v[6] ,real_norm[6],  colors[1]),
+				Vertex(_v[7],real_norm[7],  colors[1])
+			};
+			bm.indexs = {
+				3,1,0,
+			2,1,3,
+			0,5,4,
+			1,5,0,
+			3,4,7,
 			0,4,3,
-			0,3,1,
-			1,3,2,
-			1,2,6,
-			6,2,7
-		};
-		bm.nameModel = L"cube wood";
-		bm.textureName = L"pWoodDoski.dds";
-		trans = Matrix4::CreateTranslationMatrixXYZ(25, 5, -13);
-		if (!createModel(bm, trans))
-			return false;
-		trans = Matrix4::CreateTranslationMatrixXYZ(25, 20, -13);
-		if (!createModel(bm, trans))
-			return false;
-		trans = Matrix4::CreateTranslationMatrixXYZ(25, 40, -13);
-		if (!createModel(bm, trans))
-			return false;
+			1,6,5,
+			2,6,1,
+			2,7,6,
+			3,7,2,
+			6,4,5,
+			7,4,6
+			};
+			bm.shiftIndexs.push_back(bm.indexs.size());
+			bm.textureName.push_back(Model::isColor()); // color
+			bm.psoName = L"PSOLightPhong";
 
+			array<pair<float, float>, 4> coord = { pair<float, float>{-15.f, -15.f}, pair<float, float>{-15.f, 15.f}, pair<float, float>{15.f, -15.f}, pair<float, float>{15.f, 15.f} };
+			for (int i(0), y(10); i < 3; i++, y += 20)
+			{
+				for (int j(0); j < coord.size(); j++)
+				{
+					auto world1(Matrix4::CreateTranslationMatrixXYZ(coord[j].first, (float)y, coord[j].second) * Matrix::CreateTranslationMatrixX(-80.f));
+					if (!createModel(bm, world1))
+						return false;
+				}
+			}
+		}
+
+		{ 
+			// plane grass
+			BlankModel bm;
+			bm.nameModel = L"plane grass";
+			bm.textureName.push_back(L"engine_resource/textures/pGrass.dds");
+			bm.indexs =
+			{
+				0, 3, 2,
+				0, 2, 1
+			};
+			bm.shiftIndexs.push_back(bm.indexs.size());
+			bm.vertexs =
+			{
+				Vertex({-10000.f,  0.f,  -10000.f}, {0,1,0},  {-129,130,0,-1}),
+				Vertex({10000.f,  0.f,  -10000.f},{0,1,0}, {130,130,0,-1}),
+				Vertex({10000.f,  0.f, 10000.f},{0,1,0}, {130,-129,0,-1}),
+				Vertex({-10000.f,  0.f,  10000.f},{0,1,0}, {-129,-129,0,-1})
+			};
+			bm.psoName = L"PSOLightBlinnPhong";
+			if (!createModel(bm))
+				return false;
+		}
+
+		{
+			// cube wood
+			BlankModel bm;
+			float value = 10.f;
+			vector<Vector3> _v = {
+				 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
+				 Vector3(value, value, -value) ,
+				 Vector3(value, value, value),
+				 Vector3(-value, value, value),
+				 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
+				 Vector3(value, -value, -value),
+				 Vector3(value, -value, value),
+				 Vector3(-value, -value, value)
+			};
+			vector<Point> norm = {
+		generateNormal(_v[0], _v[1], _v[4]), // near
+		generateNormal(_v[5], _v[1], _v[2]), // right
+		generateNormal(_v[6], _v[2], _v[3]), // far
+		generateNormal(_v[7], _v[3], _v[0]), // left
+		generateNormal(_v[0], _v[3], _v[2]), // top
+		generateNormal(_v[7], _v[4], _v[5]), // bottom
+			};
+			vector<Point> real_norm = {
+				genereateAverageNormal(3, norm[0], norm[3], norm[4]),  // top ( против часовой, с самой нижней левой)
+				genereateAverageNormal(3, norm[0], norm[1], norm[4]),
+				genereateAverageNormal(3, norm[2], norm[1], norm[4]),
+				genereateAverageNormal(3, norm[2], norm[3], norm[4]),
+				genereateAverageNormal(3, norm[0], norm[3], norm[5]),  // bottom ( против часовой, с самой нижней левой)
+				genereateAverageNormal(3, norm[0], norm[1], norm[5]),
+				genereateAverageNormal(3, norm[2], norm[1], norm[5]),
+				genereateAverageNormal(3, norm[2], norm[3], norm[5]),
+			};
+			bm.vertexs = {
+				Vertex(_v[0], real_norm[0], {0.35f, 1.f, 0, -1}),
+				Vertex(_v[1], real_norm[1],{0.63f, 1.f, 0, -1}),
+				Vertex(_v[2],real_norm[2], {0.63f, 0.75f, 0, -1}),
+				Vertex(_v[3], real_norm[3],{0.35f, 0.75f, 0, -1}),
+				Vertex(_v[7], real_norm[7],{0.12f, 0.75f, 0, -1}),
+				Vertex(_v[4], real_norm[4],{0.12f, 1.f, 0, -1}),
+				Vertex(_v[5], real_norm[5],{0.85f, 1.f, 0, -1}),
+				Vertex(_v[6], real_norm[6],{0.85f, 0.75f, 0, -1}),
+				Vertex(_v[7], real_norm[7],{0.35f, 0.5f, 0, -1}),
+				Vertex(_v[6], real_norm[6],{0.63f, 0.5f, 0, -1}),
+				Vertex(_v[4],real_norm[4],{0.35f, 0.25f, 0, -1}),
+				Vertex(_v[5], real_norm[5],{0.63f, 0.25f, 0, -1}),
+				Vertex(_v[0],real_norm[0], {0.35f, 0.f, 0, -1}),
+				Vertex(_v[1], real_norm[1],{0.63f, 0.f, 0, -1})
+			};
+			bm.indexs = {
+				10,12,11,
+				11,12,13,
+				8,10,9,
+				9,10,11,
+				3,8,2,
+				2,8,9,
+				5,4,0,
+				0,4,3,
+				0,3,1,
+				1,3,2,
+				1,2,6,
+				6,2,7
+			};
+			bm.shiftIndexs.push_back(bm.indexs.size());
+			bm.nameModel = L"cube wood";
+			bm.textureName.push_back(L"engine_resource/textures/pWoodDoski.dds");
+			bm.psoName = L"PSOLightBlinnPhong";
+			float val(20);
+			array<pair<float, float>, 4> coord = { pair<float, float>{-val, -val}, pair<float, float>{-val, val}, pair<float, float>{val, -val}, pair<float, float>{val, val} };
+			for (int i(0), y(10); i < 3; i++, y += 30)
+			{
+				for (int j(0); j < coord.size(); j++)
+				{
+					auto world1(Matrix4::CreateTranslationMatrixXYZ(coord[j].first, (float)y, coord[j].second));
+					if (!createModel(bm, world1))
+						return false;
+				}
+			}
+		}
+
+		{
+			// plane grass, wood and house
+			BlankModel bm;
+			bm.nameModel = L"plane grass, house and wood";
+			bm.textureName.push_back(L"engine_resource/textures/pHouse.dds");
+			bm.textureName.push_back(L"engine_resource/textures/pWoodDesc.dds");
+			bm.indexs =
+			{
+				5, 7, 6,
+				5, 6, 4,
+
+				9, 11, 10,
+				9, 10, 8,
+			};
+			bm.shiftIndexs.push_back(6);
+			bm.shiftIndexs.push_back(6);
+			bm.vertexs =
+			{
+				Vertex({-100.f,  0.f,  -250.f}, {0,1,0},  {-2,3,0,-1}),
+				Vertex({50.f,  0.f,  -250.f},{0,1,0}, {3,3,0,-1}),
+				Vertex({50.f,  0.f, -50.f},{0,1,0}, {3,-2,0,-1}),
+				Vertex({-100.f,  0.f,  -50.f},{0,1,0}, {-2,-2,0,-1}),
+
+				Vertex({50.f,  0.f,  -150.f},{-1,0,0}, {2, 2 ,0,-1}),
+				Vertex({50.f,  0.f, -50.f},{-1,0,0}, {-2, 2,0,-1}),
+				Vertex({50.f,  100.f,  -150.f},{-1,0,0}, {2,-2,0,-1}),
+				Vertex({50.f,  100.f, -50.f},{-1,0,0}, {-2,-2,0,-1}),
+
+				Vertex({50.f,  100.f,  -150.f},{-1,0,0}, {1, 1 ,0,-1}), // 8
+				Vertex({50.f,  100.f, -50.f},{-1,0,0}, {0, 1,0,-1}), // 9
+				Vertex({50.f,  200.f,  -150.f},{-1,0,0}, {1,0,0,-1}), // 10
+				Vertex({50.f,  200.f, -50.f},{-1,0,0}, {0,0,0,-1}) // 11
+			};
+			bm.psoName = L"PSOLightBlinnPhong";
+			//auto world = Matrix::CreateTranslationMatrixZ(100);
+			if (!createModel(bm))
+				return false;
+		}
+
+		{
+			// dimes roft
+			BlankModel bm;
+			bm.nameModel = L"dimes-test-rofl";
+			bm.psoName = L"PSOLightBlinnPhong";
+			if (!loadModelFromFile("model_dimes/dimes.pro_object", bm))
+				return false;
+			auto transform = Matrix::CreateTranslationMatrixXYZ(-50.f, 0.f, -200.f);
+			if (!createModel(bm, transform))
+				return false;
+		}
+
+		{
+			// houses
+			vector<BlankModel> bm(3);
+			vector<string> namesModel = { "model_houses/house1.pro_object", "model_houses/house2.pro_object", "model_houses/house3.pro_object" };
+			for (int i(0); i< bm.size(); i++)
+			{
+				bm[i].nameModel = L"house " + to_wstring(i) + L" instansing";
+				bm[i].psoName = L"PSOLightBlinnPhongInstansed";
+				if (!loadModelFromFile(namesModel[i], bm[i]))
+					return false;
+			}
+			srand(time(nullptr));
+			vector<vector<sbufferInstancing>> worlds(3);
+			for (int x(-5000); x < 5000; x+=250)
+			{
+				for (int z(-5000); z < 5000; z += 250)
+				{
+					int indexModel = 0 + rand() % 3;
+					if ((x >= -150 && x <= 150) || (z >= -150 && z <= 150))
+						continue;
+					array<float, 7> degrees = { 0.f, 90.f, 180.f, 270.f, -90.f, -180.f, -270.f };
+					int indexRotate = 0 + rand() % degrees.size();
+					float rotate = degrees[indexRotate];
+					ModelPosition world(Matrix::CreateRotateMatrixY(GeneralMath::degreesToRadians(rotate)) * Matrix4::CreateTranslationMatrixXYZ(x, 0, z));
+					worlds[indexModel].push_back({ world.getWorld().getGPUMatrix(), world.getNormals().getGPUMatrix() });
+				}
+			}
+			for (int i(0); i < bm.size(); i++)
+			{
+				bm[i].instansing = true;
+				bm[i].instansingBuffer = std::move(worlds[i]);
+				if (!createModel(bm[i]))
+					return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool loadModelFromFile(const string& path, BlankModel& bm)
+	{
+		DataFromFile data;
+		if (!loadFromFileProObject(path, &data))
+			return false;
+		vector<vector<int>> shifts(data.texturesListOut.size());
+		for (VertexNormal& vn : data.vertex)
+			bm.vertexs.push_back({ vn.Pos, vn.Normal, {vn.Texture[x], vn.Texture[y], 0, -1} });
+		for (WORD& index : data.index)
+		{
+			int indNewIndexs = data.vertex[index].Texture[z];
+			shifts[indNewIndexs].push_back(index);
+		}
+		for (auto& shift : shifts)
+		{
+			bm.shiftIndexs.push_back(shift.size());
+			copy(shift.begin(), shift.end(), back_inserter(bm.indexs));
+		}
+		for (auto t : data.texturesListOut)
+		{
+			t = t.erase(0, t.find(L'/') + 1);
+			t = t.insert(0, L"engine_resource/textures/");
+			bm.textureName.push_back(t);
+		}
 		return true;
 	}
 
 	bool createModel(BlankModel& data, Matrix4 world = Matrix4::Identity())
 	{
-		ModelPtr model(new Model());
+		// todo: потом прикрутить фабрику для создания моделей
+		ModelPtr model;
 		if (modelsIndex.find(data.nameModel) == modelsIndex.end())
 		{
-			if(!data.textureName.empty())
-				if (!textures.addTexture(device, commandList, data.textureName))
-					return false;
+			for (auto&& t : data.textureName)
+			{
+				if (t == L"--")
+					continue;
+				if (!data.textureName.empty())
+					if (!textures.addTexture(device, commandList, t))
+						return false;
+			}
+		}
+
+		if (data.instansing)
+		{
+			ModelInstancing* m = new ModelInstancing;
+			if(!m->addStructuredBuffer(device, mainDescriptorHeap, frameBufferCount, L"sbInstancedPosition", data.instansingBuffer))
+				return false;
+			m->setCountInstanced(data.instansingBuffer.size());
+			model.reset(std::move(m));
+		}
+		else
+			model.reset(new ModelIdentity);
+
+		if(modelsIndex.find(data.nameModel) == modelsIndex.end())
+		{
 			if (!model->createModel(device, data))
 				return false;
-			translationVertexBufferForHeapGPU(model->getVertexBuffer(), model->getUploadVertexBuffer(), model->getSubresourceVertexData());
-			translationVertexBufferForHeapGPU(model->getIndexBuffer(), model->getUploadIndexBuffer(), model->getSubresourceIndexData());
+			model->translationBufferForHeapGPU(commandList);
 			model->addWorld(world);
 			models.push_back(model);
 			modelsIndex.insert({ data.nameModel, models.size() - 1 });
@@ -1903,13 +2917,6 @@ public:
 			models[index]->addWorld(world);
 		}
 		return true;
-	}
-
-	void translationVertexBufferForHeapGPU(ComPtr<ID3D12Resource>& buffer, ComPtr<ID3D12Resource>& bufferUpload, D3D12_SUBRESOURCE_DATA& subData)
-	{
-		UpdateSubresources(commandList.Get(), buffer.Get(), bufferUpload.Get(), 0, 0, 1, &subData);
-		commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(buffer.Get(),
-			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
 	}
 
 	void createBuffersViews()
@@ -1933,17 +2940,21 @@ public:
 		Vector3 pos = direct3DVector3ToOpenGLVector3(camera->getPosition());
 		Vector3 tar = direct3DVector3ToOpenGLVector3(camera->getTarget());
 		Vector3 up = direct3DVector3ToOpenGLVector3(camera->getUp());
-		if (!sndDevice->init(pos, tar, up))
+		if (!sndDevice->init(pos, tar, up, 0.f))
 			return false;
-		if (!sndDevice->addSound( L"rnd_night_1.wav", { 0.f, 0.f, 0.f }, STATIC_SOUND, true, false, 50.f))
+		if (!sndDevice->addSound( L"engine_resource/sounds/rnd_night_1.wav", { 0.f, 0.f, 0.f }, STATIC_SOUND, true, false, 50.f))
 			return false;
-		if (!sndDevice->addSound(L"step.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.5f))
+		if (!sndDevice->addSound(L"engine_resource/sounds/step.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.5f))
 			return false;
-		if (!sndDevice->addSound(L"run.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.5f))
+		if (!sndDevice->addSound(L"engine_resource/sounds/run.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.5f))
 			return false;
-		if (!sndDevice->addSound(L"ambient.wav", { 0.f, 0.f, 0.f }, AMBIENT_SOUND, true, false, 0.1f))
+		if (!sndDevice->addSound(L"engine_resource/sounds/ambient2.wav", { 0.f, 0.f, 0.f }, AMBIENT_SOUND, true, false, 0.1f))
 			return false;
-		if (!sndDevice->addSound(L"heavy_wind_2.wav", direct3DVector3ToOpenGLVector3(Vector3(-90.f, 0.f, 90.f)), STATIC_SOUND, true, false, 40.f))
+		if (!sndDevice->addSound(L"engine_resource/sounds/heavy_wind_2.wav", direct3DVector3ToOpenGLVector3(Vector3(-90.f, 0.f, 90.f)), STATIC_SOUND, true, false, 40.f))
+			return false;
+		if (!sndDevice->addSound(L"engine_resource/sounds/torch-on.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.6f))
+			return false;
+		if (!sndDevice->addSound(L"engine_resource/sounds/torch-off.wav", { 0.f, 0.f, 0.f }, ACTOR_SOUND, false, false, 0.6f))
 			return false;
 		return true;
 	}
@@ -1951,6 +2962,85 @@ public:
 	void startSound()
 	{
 		sndDevice->start();
+	}
+
+	bool initLight()
+	{
+		sunLight.init(Color(1.f, 1.f, 0.776f, 1.f), { -350.f, 0.f, 0.f, 0.f }, 5);
+		vector<Vertex> v;
+		vector<Index> ind;
+		float r = 10;
+		int count_usech = 25;
+		int count_h = 25;
+		Color cl = { 1.f, 0.952f, 0.04f, 1 };
+		if (r < 3) r = 3;
+		if (count_usech < 3) count_usech = 3;
+		if (count_h < 3) count_h = 3;
+		count_h++;
+		int latitudeBands = count_usech; // количество широтных полос
+		int longitudeBands = count_h; // количество полос долготы
+		float radius = r; // радиус сферы
+		for (float latNumber = 0; latNumber <= latitudeBands; latNumber++)
+		{
+			float theta = latNumber * GeneralMath::PI / latitudeBands;
+			float sinTheta = sin(theta);
+			float cosTheta = cos(theta);
+
+			for (float longNumber = 0; longNumber <= longitudeBands; longNumber++)
+			{
+				float phi = longNumber * 2 * GeneralMath::PI / longitudeBands;
+				float sinPhi = sin(phi);
+				float cosPhi = cos(phi);
+
+				float xn = cosPhi * sinTheta;   // x
+				float yn = cosTheta;            // y
+				float zn = sinPhi * sinTheta;   // z
+
+				v.push_back({ Point(r * xn, r * yn, r * zn), Point(xn, yn, zn), cl });
+			}
+		}
+		for (int latNumber(0); latNumber < latitudeBands; latNumber++)
+		{
+			for (int longNumber(0); longNumber < longitudeBands; longNumber++)
+			{
+				int first = (latNumber * (longitudeBands + 1)) + longNumber;
+				int second = first + longitudeBands + 1;
+				ind.push_back(first + 1);
+				ind.push_back(second);
+				ind.push_back(first);
+				ind.push_back(first + 1);
+				ind.push_back(second + 1);
+				ind.push_back(second);
+			}
+		}
+		BlankModel bm;
+		wstring nameSun = L"sun";
+		bm.nameModel = nameSun;
+		bm.indexs = ind;
+		bm.shiftIndexs.push_back(ind.size());
+		bm.vertexs = v;
+		bm.psoName = L"PSONoLight";
+		bm.textureName.push_back(Model::isColor());
+		auto sunPos = sunLight.getStartPosition();
+		if (!createModel(bm, Matrix4::CreateTranslationMatrixXYZ(sunPos[x], sunPos[y], sunPos[z])))
+			return false;
+		sunLight.setModel(nameSun);
+
+		lightCenter = LightPoint({ 1.f, 0.549f, 0.f, 1.f }, { 0.f, 10.f, 0.f, 0.f });
+
+		torch.init({ 1.f, 1.f, 1.f, 1.f }, {}, {}, 30.5f, 40.5f);
+		keyStatus.insert({ 'L', false });
+
+		return true;
+	}
+
+	void initGameParam()
+	{
+		gameParam.cBuffers = &cBuffers;
+		gameParam.camera = camera.get();
+		gameParam.lightCenter = &lightCenter;
+		gameParam.sunLight = &sunLight;
+		gameParam.torch = &torch;
 	}
 
 
@@ -1995,7 +3085,7 @@ public:
 		return true;
 	}
 
-	double GetFrameTime()
+	double GetFrameTime() // ПОМЕТКА НА УДАЛЕНИЕ
 	{
 		LARGE_INTEGER currentTime;
 		__int64 tickCount;
@@ -2005,8 +3095,6 @@ public:
 		tickCount = currentTime.QuadPart - frameTimeOld;
 		frameTimeOld = currentTime.QuadPart;
 
-		static long long countsPerSecond = 10000000l;
-
 		if (tickCount < 0.0f)
 			tickCount = 0.0f;
 
@@ -2015,8 +3103,8 @@ public:
 		//OutputDebugString(std::to_wstring(countsPerSecond).c_str());
 		//OutputDebugString(L"\n");
 
-		return float(tickCount) / countsPerSecond;
-	}
+		return float(tickCount) / this->countsPerSecond;
+	} 
 
 	bool updateCamera()
 	{
@@ -2025,7 +3113,10 @@ public:
 		int _x = (widthClient + startWidth) / 2;
 		int _y = (heightClient + startHeight) / 2;
 		Point2 mDelta(camProp.mouseCurrState[x] - _x, camProp.mouseCurrState[y] - _y);
-		camera->updateCamera(keyStatus, mDelta, GetFrameTime());
+		camera->updateCamera(keyStatus, mDelta, 
+			/*GetFrameTime()*/
+			std::chrono::duration_cast<std::chrono::nanoseconds>(timeFrameAfter -timeFrameBefore).count() / countsPerSecond);
+
 
 		return true;
 	}
@@ -2036,30 +3127,61 @@ public:
 		Vector3 tar = direct3DVector3ToOpenGLVector3(camera->getTarget());
 		Vector3 up = direct3DVector3ToOpenGLVector3(camera->getUp());
 		sndDevice->updateListener(pos, tar, up);
+		sndDevice->update(AMBIENT_SOUND, L"engine_resource/sounds/ambient2.wav", pos);
 		if (keyStatus['W'] || keyStatus['A'] || keyStatus['S'] || keyStatus['D'])
 		{
-			wstring nameSnd = keyStatus['X'] ? L"run.wav" : L"step.wav";
+			wstring nameSnd = keyStatus['X'] ? L"engine_resource/sounds/run.wav" : L"engine_resource/sounds/step.wav";
 			sndDevice->update(ACTOR_SOUND, nameSnd.c_str(), pos);
 			sndDevice->play(ACTOR_SOUND, nameSnd.c_str());
 		}
-		sndDevice->update(AMBIENT_SOUND, L"ambient.wav", pos);
+		if (keyStatus['L'] && !torch.isTorchUsed())
+		{
+			wstring nameSnd;
+			if (torch.isEnable())
+			{
+				nameSnd = L"engine_resource/sounds/torch-off.wav";
+				torch.disable();
+			}
+			else
+			{
+				nameSnd = L"engine_resource/sounds/torch-on.wav";
+				torch.enable();
+			}
+			torch.torchUsed(true);
+			sndDevice->update(ACTOR_SOUND, nameSnd.c_str(), pos);
+			sndDevice->play(ACTOR_SOUND, nameSnd.c_str());
+		}
 	}
 
 	bool updateScene()
 	{
-		auto view = camera->getView().getGPUMatrix();
-		auto proj = camera->getProjection().getGPUMatrix();
-		size_t countAllCb(0);
-		for (size_t i(0); i < models.size(); i++)
+		if (torch.isEnable())
 		{
-			// updates cb
-			size_t countWorlds = models[i]->getWorlds().size();
-			for (size_t j(0); j < countWorlds; j++)
+			auto targ = camera->getTarget();
+			torch.update((Vector)camera->getPosition(), (Vector)(targ - camera->getPosition()));
+		}
+
+		bool status;
+		Matrix newPosSun = sunLight.update(status);
+		if(status)
+			models[modelsIndex[sunLight.getNameModel()]]->editWorld(newPosSun, 0);
+		gameParam.view = camera->getView().getGPUMatrix();
+		gameParam.proj = camera->getProjection().getGPUMatrix();
+		size_t countAllCb(0);
+		gameParam.countAllCb = &countAllCb;
+		gameParam.torchProperty = { torch.getLight().getCutOff(), torch.getLight().getOuterCutOff(), (torch.isEnable() ? 1.f : 0.f) };
+		gameParam.frameIndex = frameIndex;
+
+		for (auto&& pso : psos)
+		{
+			for (int i(0); i < models.size(); i++)
 			{
-				cbufferCamera cbCam(models[i]->getWorlds().at(j).getGPUMatrix(), view, proj);
-				cBuffers[L"cbCamera"]->updateData(cbCam, frameIndex, countAllCb++);
+				// updates cb
+				if (models[i]->getPsoKey() == pso.first)
+					models[i]->updateConstantBuffers(gameParam);
 			}
 		}
+
 		return true;
 	}
 
@@ -2106,9 +3228,7 @@ public:
 		commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
 		// Clear the render target by using the ClearRenderTargetView command
-		float clearColor[4];
-		backBufferColor.toArray(clearColor);
-		commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+		commandList->ClearRenderTargetView(rtvHandle, backBufferColor.toArray().data(), 0, nullptr);
 
 		// clearing depth/stencil buffer
 		commandList->ClearDepthStencilView(dsDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -2118,9 +3238,12 @@ public:
 		commandList->RSSetScissorRects(1, &scissorRect); // set the scissor rects
 
 		// set the descriptor heap
-		vector<ID3D12DescriptorHeap*> descriptorHeaps = { mainDescriptorHeap[frameIndex].Get() };
-		//vector<ID3D12DescriptorHeap*> descriptorHeaps = { mainDescriptorHeap.Get() };
-		commandList->SetDescriptorHeaps(descriptorHeaps.size(), descriptorHeaps.data());
+		if (textures.getSize() != 0)
+		{
+			vector<ID3D12DescriptorHeap*> descriptorHeaps = { mainDescriptorHeap[frameIndex].Get() };
+			//vector<ID3D12DescriptorHeap*> descriptorHeaps = { mainDescriptorHeap.Get() };
+			commandList->SetDescriptorHeaps(descriptorHeaps.size(), descriptorHeaps.data());
+		}
 
 		size_t countAllCb(0);
 		for (auto&& pso : psos)
@@ -2130,26 +3253,7 @@ public:
 			for (int i(0); i < models.size(); i++)
 			{
 				if (models[i]->getPsoKey() == pso.first)
-				{
-					Texture* texture(nullptr);
-					if (textures.getTexture(models[i]->getTextureName(), &texture))
-					{
-						CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap[frameIndex]->GetGPUDescriptorHandleForHeapStart());
-						//CD3DX12_GPU_DESCRIPTOR_HANDLE tex(mainDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-						auto textureSrvIndex = texture->getIndexSrvHeap();
-						tex.Offset(textureSrvIndex, mCbvSrvDescriptorSize);
-						commandList->SetGraphicsRootDescriptorTable(0, tex);
-					}
-					size_t countWorlds = models[i]->getWorlds().size();
-					commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
-					commandList->IASetVertexBuffers(0, 1, &models[i]->getVertexBufferView()); // set the vertex buffer (using the vertex buffer view)
-					commandList->IASetIndexBuffer(&models[i]->getIndexBufferView());
-					for (size_t j(0); j < countWorlds; j++)
-					{
-						commandList->SetGraphicsRootConstantBufferView(1, cBuffers[L"cbCamera"]->getConstantBufferUploadHeap(frameIndex, countAllCb++));
-						commandList->DrawIndexedInstanced(models[i]->getCountIndex(), 1, 0, 0, 0);
-					}
-				}
+					models[i]->draw(commandList, cBuffers, textures, frameIndex, countAllCb, mainDescriptorHeap[frameIndex], mCbvSrvDescriptorSize);
 			}
 		}
 
@@ -2167,6 +3271,7 @@ public:
 	bool render()
 	{
 		HRESULT hr;
+		timeFrameBefore = std::chrono::high_resolution_clock::now();
 
 		if (!updatePipeline()) // update the pipeline by sending commands to the commandqueue
 			return false;
@@ -2195,6 +3300,7 @@ public:
 			fpsCounter.setBeforeTime();
 		}
 
+		timeFrameAfter = std::chrono::high_resolution_clock::now();
 		return true;
 	}
 
@@ -2290,7 +3396,7 @@ Window* Window::current(nullptr);
 int WINAPI WinMain(HINSTANCE hInstance,  HINSTANCE hPrevInstance, LPSTR lpCmdLine,  int nShowCmd)
 {
 	// create the window
-	shared_ptr<Window>  window(new Window(3, 0, 1, 900, 650, TypeCamera::STATIC_CAMERA));
+	shared_ptr<Window>  window(new Window(3, 0, 1, 900, 650, TypeCamera::GAME_CAMERA));
 	if (!window->initializeWindow(hInstance))
 	{
 		MessageBox(0, L"Window Initialization - Failed", L"Error", MB_OK);
@@ -2323,13 +3429,20 @@ int WINAPI WinMain(HINSTANCE hInstance,  HINSTANCE hPrevInstance, LPSTR lpCmdLin
 
 // разобраться, как менять разрешение экрана - это потом
 
-// игровая камера
-// разобраться с синхронизацией по времени
+// игровая камера:
+// разобраться с синхронизацией по времени - движение и вращение немного зависит от фпс
 // присед, полный присед - реализовать
-
-// msaa - разобраться, как включать
+// msaa:  разобраться, как включать
 
 
 
 
 // звук - звуки статические - всегда делать СТЕРЕО
+// для того, чтобы cb появился в шейдере, надо его использовать в шейдере обязательно
+
+
+// TODO: камера
+// input lag - изучить проблему
+// прочитать стаью, реализовать очередь задержки?
+// вынести опрос input в отдельный поток
+// скачать пример из input lag и проверить, как там реализована очередь задержки

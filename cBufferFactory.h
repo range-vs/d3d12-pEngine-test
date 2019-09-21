@@ -7,7 +7,6 @@
 #include <map>
 #include <memory>
 
-#include "types.h"
 #include "cBufferTypes.h"
 
 using namespace std;
@@ -22,7 +21,7 @@ class CBufferGeneral
 	size_t shift;
 public:
 	template<class TypeData>
-	bool initConstantBuffer(ComPtr<ID3D12Device>& device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering)
+	bool initConstantBuffer(ComPtr<ID3D12Device>& device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering, const wstring& debugName)
 	{
 		constantBufferUploadHeap.resize(buffering);
 		bufferGpuAddress.resize(buffering);
@@ -33,13 +32,13 @@ public:
 			hr = device->CreateCommittedResource(
 				&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD), // this heap will be used to upload the constant buffer data
 				D3D12_HEAP_FLAG_NONE, // no flags
-				&CD3DX12_RESOURCE_DESC::Buffer(1024 * 64), // size of the resource heap. Must be a multiple of 64KB for single-textures and constant buffers
+				&CD3DX12_RESOURCE_DESC::Buffer(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), // size of the resource heap. Must be a multiple of 64KB for single-textures and constant buffers
 				D3D12_RESOURCE_STATE_GENERIC_READ, // will be data that is read from so we keep it in the generic read state
 				nullptr, // we do not have use an optimized clear value for constant buffers
 				IID_PPV_ARGS(constantBufferUploadHeap[i].GetAddressOf()));
 			if (FAILED(hr))
 				return false;
-			constantBufferUploadHeap[i]->SetName(L"Constant Buffer Upload Resource Heap");
+			hr = constantBufferUploadHeap[i]->SetName(debugName.c_str());
 			if (FAILED(hr))
 				return false;
 
@@ -86,12 +85,27 @@ public:
 	CBufferGeneralPtr create(ComPtr<ID3D12Device>& device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering)override
 	{
 		CBufferGeneralPtr cameraBuffer(new CBufferGeneral);
-		if (!cameraBuffer->initConstantBuffer<cbufferCamera>(device, mainDescriptorHeap, buffering))
+		if (!cameraBuffer->initConstantBuffer<cbufferCamera>(device, mainDescriptorHeap, buffering, L"camera cb"))
 		{
 			// error
 			exit(1);
 		}
 		return cameraBuffer;
+	}
+};
+
+class CBufferDirectionLight : public CBufferFactory
+{
+public:
+	CBufferGeneralPtr create(ComPtr<ID3D12Device>& device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering)override
+	{
+		CBufferGeneralPtr dirLightBuffer(new CBufferGeneral);
+		if (!dirLightBuffer->initConstantBuffer<cbufferLight>(device, mainDescriptorHeap, buffering, L"dir light cb"))
+		{
+			// error
+			exit(1);
+		}
+		return dirLightBuffer;
 	}
 };
 
@@ -105,7 +119,8 @@ class CBufferCreator
 	{
 		return
 		{
-			{L"cbCamera", shared_ptr<CBufferFactory>(new CBufferCamera)}
+			{L"cbCamera", shared_ptr<CBufferFactory>(new CBufferCamera)},
+			{L"cbLight", shared_ptr<CBufferFactory>(new CBufferDirectionLight)}
 		};
 	}
 public:

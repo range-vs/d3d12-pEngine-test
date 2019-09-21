@@ -47,7 +47,7 @@ class DYNLIB_PSOUND SoundDevice
 
 	void destroy();
 public:
-	bool init(const Vector3& p, const Vector3& d, const Vector3& h);
+	bool init(const Vector3& p, const Vector3& d, const Vector3& h, float volumeDevice = 5.f);
 	bool addSound(const std::wstring& filename, const Vector3& p, const SoundType& type, bool looped, bool streamed, float v);
 	void updateListener(const Vector3& p, const Vector3& d, const Vector3& h);
 	void update(const SoundType& type, const std::wstring& key, const Vector3& p);
@@ -72,7 +72,7 @@ class Listener
 	Listener& operator=(const Listener&);
 public:
 
-	bool init(const Vector3& p, const Vector3& d, const Vector3& h);
+	bool init(const Vector3& p, const Vector3& d, const Vector3& h, float volumeDevice);
 	void updatePosition(const Vector3& p, const Vector3& d, const Vector3& h);
 	void setVolumeDevice(float v);
 

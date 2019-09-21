@@ -86,13 +86,13 @@ namespace gmath
 		friend const Vector_4<T1>operator-(const Vector_4<T1>& v);
 
 		// методы
-		// абстрактные методы
-		float length();
 		void normalize();
 		void inverse();
 		void identity();
 		std::string c_str();
 		std::wstring c_wstr();
+		T length();
+		std::vector<T> toArray();
 
 		// основные
 		static float Length(const Vector_4<T>& v);
@@ -122,8 +122,6 @@ namespace gmath
 		void vector4TransformNormal(const Matrix_4<T>& m);
 		Vector_4 vector4TransformNormal(const Vector_4<T>& v, const Matrix_4<T>& m);
 
-		// возврат массива
-		void toArray(T* arr);
 	};
 
 	// конструкторы
@@ -491,7 +489,7 @@ namespace gmath
 	// абстрактные методы
 
 	template<class T>
-	inline float Vector_4<T>::length()
+	inline T Vector_4<T>::length()
 	{
 		return sqrtf(powf(this->x, 2) + powf(this->y, 2) + powf(this->z, 2) + powf(this->w, 2));
 	}
@@ -711,12 +709,9 @@ namespace gmath
 
 	// возвращаем массив
 	template<class T>
-	inline void gmath::Vector_4<T>::toArray(T* arr)
+	inline std::vector<T> gmath::Vector_4<T>::toArray()
 	{
-		arr[0] = this->x;
-		arr[1] = this->y;
-		arr[2] = this->z;
-		arr[3] = this->w;
+		return { this->x,  this->y, this->z, this->w };
 	}
 
 }
