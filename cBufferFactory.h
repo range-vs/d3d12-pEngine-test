@@ -94,20 +94,36 @@ public:
 	}
 };
 
-class CBufferDirectionLight : public CBufferFactory
+class CBufferLight : public CBufferFactory
 {
 public:
 	CBufferGeneralPtr create(ComPtr<ID3D12Device>& device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering)override
 	{
-		CBufferGeneralPtr dirLightBuffer(new CBufferGeneral);
-		if (!dirLightBuffer->initConstantBuffer<cbufferLight>(device, mainDescriptorHeap, buffering, L"dir light cb"))
+		CBufferGeneralPtr lightBuffer(new CBufferGeneral);
+		if (!lightBuffer->initConstantBuffer<cbufferLight>(device, mainDescriptorHeap, buffering, L"light cb"))
 		{
 			// error
 			exit(1);
 		}
-		return dirLightBuffer;
+		return lightBuffer;
 	}
 };
+
+class CBufferMaterial: public CBufferFactory
+{
+public:
+	CBufferGeneralPtr create(ComPtr<ID3D12Device>& device, vector<ComPtr<ID3D12DescriptorHeap>>& mainDescriptorHeap, size_t buffering)override
+	{
+		CBufferGeneralPtr matBuffer(new CBufferGeneral);
+		if (!matBuffer->initConstantBuffer<cbufferMaterial>(device, mainDescriptorHeap, buffering, L"material cb"))
+		{
+			// error
+			exit(1);
+		}
+		return matBuffer;
+	}
+};
+
 
 // Factory creator
 
@@ -120,7 +136,8 @@ class CBufferCreator
 		return
 		{
 			{L"cbCamera", shared_ptr<CBufferFactory>(new CBufferCamera)},
-			{L"cbLight", shared_ptr<CBufferFactory>(new CBufferDirectionLight)}
+			{L"cbLight", shared_ptr<CBufferFactory>(new CBufferLight)},
+			{L"cbMaterial", shared_ptr<CBufferFactory>(new CBufferMaterial)}
 		};
 	}
 public:

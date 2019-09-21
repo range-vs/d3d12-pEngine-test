@@ -140,7 +140,7 @@
     <ClInclude Include="cBufferTypes.h" />
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="DDSTextureLoader.h" />
-    <ClInclude Include="PSOLoader.h" />
+    <ClInclude Include="loaders.h" />
     <ClInclude Include="sBufferFactory.h" />
     <ClInclude Include="sBufferTypes.h" />
     <ClInclude Include="types.h" />

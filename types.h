@@ -28,9 +28,9 @@ struct BlankModel
 	vector<Index> indexs;
 	vector<size_t> shiftIndexs;
 	vector<Vertex> vertexs;
-	wstring material;
+	vector<wstring> materials;
 	wstring psoName;
-	vector<wstring> textureName;
+	vector<wstring> texturesName;
 	wstring nameModel;
 	bool instansing = false;
 	vector< sbufferInstancing> instansingBuffer;

@@ -21,7 +21,7 @@
 
 #include "cBufferFactory.h"
 #include "sBufferFactory.h"
-#include "PSOLoader.h"
+#include "loaders.h"
 #include "types.h"
 
 #include "DDSTextureLoader.h"
@@ -795,6 +795,43 @@ public:
 
 
 
+struct Material
+{
+	Vector ambient;
+	Vector diffuse;
+	Vector specular;
+	float shininess;
+
+	Material() :ambient(), diffuse(), specular(), shininess(0.f) {}
+	Material(const Vector& a, const Vector& d, const Vector& s, const float& sn):ambient(a), diffuse(d), specular(s), shininess(sn){}
+};
+
+class ContainerMaterials
+{
+	map<wstring, Material> materials;
+
+public:
+	ContainerMaterials(){}
+	bool addMaterial(const wstring& name, const Material& m) 
+	{
+		if (materials.find(name) != materials.end())
+			return false;
+		materials.insert({ name, m });
+		return true;
+	}
+	bool getMaterial(const wstring& name, Material** m)
+	{
+		if (materials.find(name) == materials.end())
+		{
+			// error
+			return false;
+		}
+		*m = &materials[name];
+		return true;
+	}
+};
+
+
 
 class Light
 {
@@ -960,11 +997,13 @@ public:
 struct GameParameters
 {
 	map<wstring, CBufferGeneralPtr>* cBuffers;
+	ContainerMaterials* materials;
 	Camera* camera;
 	Sun* sunLight;
 	LightPoint* lightCenter;
 	Torch* torch; 
 	size_t* countAllCb;
+	size_t* countMaterialsCb;
 	Matrix view;
 	Matrix proj;
 	size_t frameIndex;
@@ -996,11 +1035,13 @@ protected:
 
 	vector< size_t> countIndex;
 	vector<wstring> texturesKey;
+	vector<wstring> materialsKey;
+
 	static wstring _color;
 public:
 	virtual bool createModel(ComPtr<ID3D12Device>& device, BlankModel& data) = 0;
 	virtual void draw(ComPtr < ID3D12GraphicsCommandList>& commandList, map<wstring, CBufferGeneralPtr>& cBuffers, ContainerTextures& textures,
-		int frameIndex, size_t& countAllCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) = 0;
+		int frameIndex, size_t& countAllCb, size_t& countMaterialsCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) = 0;
 
 	template<class TypeBuffer>
 	bool createBuffer(ComPtr<ID3D12Device>& device, vector< TypeBuffer>& buff, ComPtr < ID3D12Resource>& buffGpu, size_t& buffSize, const wstring& name)
@@ -1082,7 +1123,8 @@ public:
 			return false;
 		countIndex = data.shiftIndexs;
 		psoKey = data.psoName;
-		texturesKey = data.textureName;
+		texturesKey = data.texturesName;
+		materialsKey = data.materials;
 		return true;
 	}
 
@@ -1112,7 +1154,7 @@ public:
 	}
 
 	void draw(ComPtr < ID3D12GraphicsCommandList>& commandList, map<wstring, CBufferGeneralPtr>& cBuffers, ContainerTextures& textures,
-		int frameIndex, size_t& countAllCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) override
+		int frameIndex, size_t& countAllCb, size_t& countMaterialsCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) override
 	{
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
 		commandList->IASetVertexBuffers(0, 1, &vertexBufferView); // set the vertex buffer (using the vertex buffer view)
@@ -1135,6 +1177,8 @@ public:
 					tex.Offset(textureSrvIndex, mCbvSrvDescriptorSize);
 					commandList->SetGraphicsRootDescriptorTable(0, tex);
 				}
+				commandList->SetGraphicsRootConstantBufferView(3, cBuffers[L"cbMaterial"]->getConstantBufferUploadHeap(frameIndex, countMaterialsCb));
+				countMaterialsCb++;
 				commandList->DrawIndexedInstanced(countIndex[i], 1, startIndex, 0, 0);
 				startIndex += countIndex[i];
 			}
@@ -1158,6 +1202,17 @@ public:
 				gameParameters.torchProperty);
 
 			gameParameters.cBuffers->at(L"cbLight")->updateData(cbDirLight, gameParameters.frameIndex, *gameParameters.countAllCb);
+
+			for (size_t k(0); k < materialsKey.size(); k++)
+			{
+				Material* m(nullptr);
+				if (gameParameters.materials->getMaterial(materialsKey[k], &m))
+				{
+					cbufferMaterial mat(m->ambient, m->diffuse, m->specular, m->shininess);
+					gameParameters.cBuffers->at(L"cbMaterial")->updateData(mat, gameParameters.frameIndex, *gameParameters.countMaterialsCb);
+					(*gameParameters.countMaterialsCb)++;
+				}
+			}
 
 			(*gameParameters.countAllCb)++;
 		}
@@ -1210,7 +1265,8 @@ public:
 			return false;
 		countIndex = data.shiftIndexs;
 		psoKey = data.psoName;
-		texturesKey = data.textureName;
+		texturesKey = data.texturesName;
+		materialsKey = data.materials;
 		return true;
 	}
 
@@ -1240,7 +1296,7 @@ public:
 	}
 
 	void draw(ComPtr < ID3D12GraphicsCommandList>& commandList, map<wstring, CBufferGeneralPtr>& cBuffers, ContainerTextures& textures,
-		int frameIndex, size_t& countAllCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) override
+		int frameIndex, size_t& countAllCb, size_t& countMaterialsCb, ComPtr<ID3D12DescriptorHeap>& mainDescriptorHeap, size_t& mCbvSrvDescriptorSize) override
 	{
 		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
 		commandList->IASetVertexBuffers(0, 1, &vertexBufferView); // set the vertex buffer (using the vertex buffer view)
@@ -1248,7 +1304,8 @@ public:
 
 		commandList->SetGraphicsRootConstantBufferView(1, cBuffers[L"cbCamera"]->getConstantBufferUploadHeap(frameIndex, countAllCb));
 		commandList->SetGraphicsRootConstantBufferView(2, cBuffers[L"cbLight"]->getConstantBufferUploadHeap(frameIndex, countAllCb));
-		commandList->SetGraphicsRootShaderResourceView(3, sBuffers[L"sbInstancedPosition"]->getConstantBufferUploadHeap(frameIndex)); // продумать структуру соответствия
+		
+		commandList->SetGraphicsRootShaderResourceView(4, sBuffers[L"sbInstancedPosition"]->getConstantBufferUploadHeap(frameIndex)); // продумать структуру соответствия
 
 		countAllCb++;
 		size_t startIndex(0);
@@ -1263,6 +1320,8 @@ public:
 				tex.Offset(textureSrvIndex, mCbvSrvDescriptorSize);
 				commandList->SetGraphicsRootDescriptorTable(0, tex);
 			}
+			commandList->SetGraphicsRootConstantBufferView(3, cBuffers[L"cbMaterial"]->getConstantBufferUploadHeap(frameIndex, countMaterialsCb));
+			countMaterialsCb++;
 			commandList->DrawIndexedInstanced(countIndex[i], countInstance, startIndex, 0, 0);
 			startIndex += countIndex[i];
 		}
@@ -1280,6 +1339,17 @@ public:
 			gameParameters.torchProperty);
 
 		gameParameters.cBuffers->at(L"cbLight")->updateData(cbDirLight, gameParameters.frameIndex, *gameParameters.countAllCb);
+
+		for (size_t k(0); k < materialsKey.size(); k++)
+		{
+			Material* m(nullptr);
+			if (gameParameters.materials->getMaterial(materialsKey[k], &m))
+			{
+				cbufferMaterial mat(m->ambient, m->diffuse, m->specular, m->shininess);
+				gameParameters.cBuffers->at(L"cbMaterial")->updateData(mat, gameParameters.frameIndex, *gameParameters.countMaterialsCb);
+				(*gameParameters.countMaterialsCb)++;
+			}
+		}
 
 		(*gameParameters.countAllCb)++;
 	}
@@ -1504,6 +1574,8 @@ class Window
 	Torch torch;
 
 	GameParameters gameParam;
+
+	ContainerMaterials materials;
 
 	// test camera timing
 	chrono::time_point<std::chrono::high_resolution_clock> timeFrameBefore;
@@ -1741,6 +1813,8 @@ public:
 			return false;
 
 		// create light
+		if (!loadMaterials())
+			return false;
 		if (!initLight())
 			return false;
 
@@ -2501,88 +2575,6 @@ public:
 		};
 		Matrix4 trans;
 
-		//{
-		//	// cube textures instansing
-		//	BlankModel bm;
-		//	float value = 10.f;
-		//	vector<Vector3> _v = {
-		//		 Vector3(-value, value, -value), // top ( против часовой, с самой нижней левой)
-		//		 Vector3(value, value, -value) ,
-		//		 Vector3(value, value, value),
-		//		 Vector3(-value, value, value),
-		//		 Vector3(-value, -value, -value), // bottom ( против часовой, с самой нижней левой)
-		//		 Vector3(value, -value, -value),
-		//		 Vector3(value, -value, value),
-		//		 Vector3(-value, -value, value)
-		//	};
-		//	vector<Point> norm = {
-		//generateNormal(_v[0], _v[1], _v[4]), // near
-		//generateNormal(_v[5], _v[1], _v[2]), // right
-		//generateNormal(_v[6], _v[2], _v[3]), // far
-		//generateNormal(_v[7], _v[3], _v[0]), // left
-		//generateNormal(_v[0], _v[3], _v[2]), // top
-		//generateNormal(_v[7], _v[4], _v[5]), // bottom
-		//	};
-		//	vector<Point> real_norm = {
-		//		genereateAverageNormal(3, norm[0], norm[3], norm[4]),  // top ( против часовой, с самой нижней левой)
-		//		genereateAverageNormal(3, norm[0], norm[1], norm[4]),
-		//		genereateAverageNormal(3, norm[2], norm[1], norm[4]),
-		//		genereateAverageNormal(3, norm[2], norm[3], norm[4]),
-		//		genereateAverageNormal(3, norm[0], norm[3], norm[5]),  // bottom ( против часовой, с самой нижней левой)
-		//		genereateAverageNormal(3, norm[0], norm[1], norm[5]),
-		//		genereateAverageNormal(3, norm[2], norm[1], norm[5]),
-		//		genereateAverageNormal(3, norm[2], norm[3], norm[5]),
-		//	};
-		//	bm.vertexs = {
-		//		Vertex(_v[0], real_norm[0], {0.35f, 1.f, 0, -1}),
-		//		Vertex(_v[1], real_norm[1],{0.63f, 1.f, 0, -1}),
-		//		Vertex(_v[2],real_norm[2], {0.63f, 0.75f, 0, -1}),
-		//		Vertex(_v[3], real_norm[3],{0.35f, 0.75f, 0, -1}),
-		//		Vertex(_v[7], real_norm[7],{0.12f, 0.75f, 0, -1}),
-		//		Vertex(_v[4], real_norm[4],{0.12f, 1.f, 0, -1}),
-		//		Vertex(_v[5], real_norm[5],{0.85f, 1.f, 0, -1}),
-		//		Vertex(_v[6], real_norm[6],{0.85f, 0.75f, 0, -1}),
-		//		Vertex(_v[7], real_norm[7],{0.35f, 0.5f, 0, -1}),
-		//		Vertex(_v[6], real_norm[6],{0.63f, 0.5f, 0, -1}),
-		//		Vertex(_v[4],real_norm[4],{0.35f, 0.25f, 0, -1}),
-		//		Vertex(_v[5], real_norm[5],{0.63f, 0.25f, 0, -1}),
-		//		Vertex(_v[0],real_norm[0], {0.35f, 0.f, 0, -1}),
-		//		Vertex(_v[1], real_norm[1],{0.63f, 0.f, 0, -1})
-		//	};
-		//	bm.indexs = {
-		//		10,12,11,
-		//		11,12,13,
-		//		8,10,9,
-		//		9,10,11,
-		//		3,8,2,
-		//		2,8,9,
-		//		5,4,0,
-		//		0,4,3,
-		//		0,3,1,
-		//		1,3,2,
-		//		1,2,6,
-		//		6,2,7
-		//	};
-		//	bm.shiftIndexs.push_back(bm.indexs.size());
-		//	bm.nameModel = L"cube wood instansing";
-		//	bm.textureName.push_back(L"engine_resource/textures/pWoodDoski2.dds");
-		//	bm.psoName = L"PSOLightBlinnPhongInstansed";
-		//	vector<sbufferInstancing> worlds;
-		//	array<pair<float, float>, 4> coord = { pair<float, float>{-15.f, -15.f}, pair<float, float>{-15.f, 15.f}, pair<float, float>{15.f, -15.f}, pair<float, float>{15.f, 15.f} };
-		//	for (int i(0), y(10); i < 10000; i++, y += 30)
-		//	{
-		//		for (int j(0); j < coord.size(); j++)
-		//		{
-		//			ModelPosition world(Matrix4::CreateTranslationMatrixXYZ(coord[j].first, (float)y, coord[j].second) * Matrix::CreateTranslationMatrixXYZ(-80.f, 0.f, -200.f));
-		//			worlds.push_back({ world.getWorld().getGPUMatrix(), world.getNormals().getGPUMatrix() });
-		//		}
-		//	}
-		//	bm.instansing = true;
-		//	bm.instansingBuffer = std::move(worlds);
-		//	if (!createModel(bm))
-		//		return false;
-		//}
-
 		{
 			// cube color
 			BlankModel bm;
@@ -2641,7 +2633,8 @@ public:
 			7,4,6
 			};
 			bm.shiftIndexs.push_back(bm.indexs.size());
-			bm.textureName.push_back(Model::isColor()); // color
+			bm.texturesName.push_back(Model::isColor()); // color
+			bm.materials.push_back(L"default");
 			bm.psoName = L"PSOLightPhong";
 
 			array<pair<float, float>, 4> coord = { pair<float, float>{-15.f, -15.f}, pair<float, float>{-15.f, 15.f}, pair<float, float>{15.f, -15.f}, pair<float, float>{15.f, 15.f} };
@@ -2660,7 +2653,7 @@ public:
 			// plane grass
 			BlankModel bm;
 			bm.nameModel = L"plane grass";
-			bm.textureName.push_back(L"engine_resource/textures/pGrass.dds");
+			bm.texturesName.push_back(L"engine_resource/textures/pGrass.dds");
 			bm.indexs =
 			{
 				0, 3, 2,
@@ -2675,6 +2668,7 @@ public:
 				Vertex({-10000.f,  0.f,  10000.f},{0,1,0}, {-129,-129,0,-1})
 			};
 			bm.psoName = L"PSOLightBlinnPhong";
+			bm.materials.push_back(L"default");
 			if (!createModel(bm))
 				return false;
 		}
@@ -2743,8 +2737,9 @@ public:
 			};
 			bm.shiftIndexs.push_back(bm.indexs.size());
 			bm.nameModel = L"cube wood";
-			bm.textureName.push_back(L"engine_resource/textures/pWoodDoski.dds");
+			bm.texturesName.push_back(L"engine_resource/textures/pWoodDoski.dds");
 			bm.psoName = L"PSOLightBlinnPhong";
+			bm.materials.push_back(L"default");
 			float val(20);
 			array<pair<float, float>, 4> coord = { pair<float, float>{-val, -val}, pair<float, float>{-val, val}, pair<float, float>{val, -val}, pair<float, float>{val, val} };
 			for (int i(0), y(10); i < 3; i++, y += 30)
@@ -2759,11 +2754,13 @@ public:
 		}
 
 		{
-			// plane grass, wood and house
+			// plane grass, wood and cirpic
 			BlankModel bm;
-			bm.nameModel = L"plane grass, house and wood";
-			bm.textureName.push_back(L"engine_resource/textures/pHouse.dds");
-			bm.textureName.push_back(L"engine_resource/textures/pWoodDesc.dds");
+			bm.nameModel = L"plane grass, cirpic and wood";
+			bm.texturesName.push_back(L"engine_resource/textures/pHouse.dds");
+			bm.texturesName.push_back(L"engine_resource/textures/pWoodDesc.dds");
+			bm.materials.push_back(L"default");
+			bm.materials.push_back(L"default");
 			bm.indexs =
 			{
 				5, 7, 6,
@@ -2792,7 +2789,6 @@ public:
 				Vertex({50.f,  200.f, -50.f},{-1,0,0}, {0,0,0,-1}) // 11
 			};
 			bm.psoName = L"PSOLightBlinnPhong";
-			//auto world = Matrix::CreateTranslationMatrixZ(100);
 			if (!createModel(bm))
 				return false;
 		}
@@ -2870,7 +2866,8 @@ public:
 		{
 			t = t.erase(0, t.find(L'/') + 1);
 			t = t.insert(0, L"engine_resource/textures/");
-			bm.textureName.push_back(t);
+			bm.texturesName.push_back(t);
+			bm.materials.push_back(L"default");
 		}
 		return true;
 	}
@@ -2881,11 +2878,11 @@ public:
 		ModelPtr model;
 		if (modelsIndex.find(data.nameModel) == modelsIndex.end())
 		{
-			for (auto&& t : data.textureName)
+			for (auto&& t : data.texturesName)
 			{
 				if (t == L"--")
 					continue;
-				if (!data.textureName.empty())
+				if (!data.texturesName.empty())
 					if (!textures.addTexture(device, commandList, t))
 						return false;
 			}
@@ -2964,6 +2961,28 @@ public:
 		sndDevice->start();
 	}
 
+
+
+	bool loadMaterials()
+	{
+		MaterialLoader mLoader;
+		bool status;
+		auto materialsBlank = mLoader.load(status, L"engine_resource/configs/materials.pCfg");
+		if (!status)
+			return false;
+		for (auto& m : materialsBlank)
+		{
+			Material mat(
+				{ m.ambient[x], m.ambient[y], m.ambient[z], m.ambient[w] },
+				{ m.diffuse[x], m.diffuse[y], m.diffuse[z], m.diffuse[w] },
+				{ m.specular[x] , m.specular[y], m.specular[z], m.specular[w] },
+				m.shininess);
+			if (!materials.addMaterial(m.name, mat))
+				OutputDebugString(wstring(L"The material \"" + m.name + L"\" already exists. Ignoring.").c_str());
+		}
+		return true;
+	}
+
 	bool initLight()
 	{
 		sunLight.init(Color(1.f, 1.f, 0.776f, 1.f), { -350.f, 0.f, 0.f, 0.f }, 5);
@@ -3020,7 +3039,7 @@ public:
 		bm.shiftIndexs.push_back(ind.size());
 		bm.vertexs = v;
 		bm.psoName = L"PSONoLight";
-		bm.textureName.push_back(Model::isColor());
+		bm.texturesName.push_back(Model::isColor());
 		auto sunPos = sunLight.getStartPosition();
 		if (!createModel(bm, Matrix4::CreateTranslationMatrixXYZ(sunPos[x], sunPos[y], sunPos[z])))
 			return false;
@@ -3041,6 +3060,7 @@ public:
 		gameParam.lightCenter = &lightCenter;
 		gameParam.sunLight = &sunLight;
 		gameParam.torch = &torch;
+		gameParam.materials = &materials;
 	}
 
 
@@ -3168,7 +3188,9 @@ public:
 		gameParam.view = camera->getView().getGPUMatrix();
 		gameParam.proj = camera->getProjection().getGPUMatrix();
 		size_t countAllCb(0);
+		size_t countMaterialsCb(0);
 		gameParam.countAllCb = &countAllCb;
+		gameParam.countMaterialsCb = &countMaterialsCb;
 		gameParam.torchProperty = { torch.getLight().getCutOff(), torch.getLight().getOuterCutOff(), (torch.isEnable() ? 1.f : 0.f) };
 		gameParam.frameIndex = frameIndex;
 
@@ -3246,6 +3268,7 @@ public:
 		}
 
 		size_t countAllCb(0);
+		size_t countMaterialsCb(0);
 		for (auto&& pso : psos)
 		{
 			commandList->SetPipelineState(pso.second->getPipelineStateObject().Get());
@@ -3253,7 +3276,7 @@ public:
 			for (int i(0); i < models.size(); i++)
 			{
 				if (models[i]->getPsoKey() == pso.first)
-					models[i]->draw(commandList, cBuffers, textures, frameIndex, countAllCb, mainDescriptorHeap[frameIndex], mCbvSrvDescriptorSize);
+					models[i]->draw(commandList, cBuffers, textures, frameIndex, countAllCb, countMaterialsCb, mainDescriptorHeap[frameIndex], mCbvSrvDescriptorSize);
 			}
 		}
 

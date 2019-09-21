@@ -31,3 +31,15 @@ struct cbufferLight
 		const Color& cs, const Vector& ds, const Vector& ps, const Vector& prop) :colorDirectional(c), directionalDirectional(d),
 		colorPoint(colp), positionPoint(pp), cameraPosition(cp), normals(n), colorSpot(cs), directionalSpot(ds), positionSpot(ps), propertySpot(prop) {}
 };
+
+struct cbufferMaterial
+{
+	Vector ambient;
+	Vector diffuse;
+	Vector specular;
+	float shininess;
+
+	cbufferMaterial() :ambient(), diffuse(), specular(), shininess(0.f) {}
+	cbufferMaterial(const Vector& a, const Vector& d, const Vector& s, const float& sn) :ambient(a), diffuse(d), specular(s), shininess(sn) {}
+};
+

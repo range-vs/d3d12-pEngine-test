@@ -27,9 +27,6 @@
     <ClInclude Include="cBufferTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="PSOLoader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -40,6 +37,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="sBufferFactory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="loaders.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
