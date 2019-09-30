@@ -45,6 +45,8 @@ namespace gmath
 		bool operator!=(const Vector_3<T>& v);
 		bool operator<(const T& v);
 		bool operator>(const T& v);
+		bool operator<(const Vector_3<T>& v)const;
+		bool operator>(const Vector_3<T>& v)const;
 		bool operator<=(const T& v);
 		bool operator>=(const T& v);
 
@@ -249,6 +251,76 @@ namespace gmath
 	inline bool Vector_3<T>::operator>(const T & v)
 	{
 		return this->x > v && this->y > v && this->z > v;
+	}
+
+	template<class T>
+	inline bool Vector_3<T>::operator<(const Vector_3<T>& v)const
+	{
+		// z trumps, then y, then x
+		if (this->z < v.z)
+		{
+			return true;
+		}
+		else if (this->z > v.z)
+		{
+			return false;
+		}
+		// Otherwise z is equal
+		if (this->y < v.y)
+		{
+			return true;
+		}
+		else if (this->y > v.y)
+		{
+			return false;
+		}
+		// Otherwise z and y are equal
+		if (this->x < v.x)
+		{
+			return true;
+		}
+		/* Simple optimization Do not need this test
+		   If this fails or succeeded the result is false.
+		else if( this->x > v.x )
+		{    return false;
+		}*/
+		// Otherwise z and y and x are all equal
+		return false;
+	}
+
+	template<class T>
+	inline bool Vector_3<T>::operator>(const Vector_3<T>& v)const
+	{
+		// z trumps, then y, then x
+		if (this->z > v.z)
+		{
+			return true;
+		}
+		else if (this->z < v.z)
+		{
+			return false;
+		}
+		// Otherwise z is equal
+		if (this->y > v.y)
+		{
+			return true;
+		}
+		else if (this->y < v.y)
+		{
+			return false;
+		}
+		// Otherwise z and y are equal
+		if (this->x > v.x)
+		{
+			return true;
+		}
+		/* Simple optimization Do not need this test
+		   If this fails or succeeded the result is false.
+		else if( this->x > v.x )
+		{    return false;
+		}*/
+		// Otherwise z and y and x are all equal
+		return false;
 	}
 
 	template<class T>

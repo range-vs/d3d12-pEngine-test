@@ -136,13 +136,26 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="camera.h" />
     <ClInclude Include="cBufferFactory.h" />
     <ClInclude Include="cBufferTypes.h" />
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="DDSTextureLoader.h" />
+    <ClInclude Include="game_parameters.h" />
+    <ClInclude Include="general_types.h" />
+    <ClInclude Include="light.h" />
     <ClInclude Include="loaders.h" />
+    <ClInclude Include="materials.h" />
+    <ClInclude Include="model.h" />
+    <ClInclude Include="pObjConstants.h" />
+    <ClInclude Include="pso.h" />
     <ClInclude Include="sBufferFactory.h" />
     <ClInclude Include="sBufferTypes.h" />
+    <ClInclude Include="shaders.h" />
+    <ClInclude Include="sun.h" />
+    <ClInclude Include="textures.h" />
+    <ClInclude Include="timer.h" />
+    <ClInclude Include="torch.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="Utils.h" />
   </ItemGroup>

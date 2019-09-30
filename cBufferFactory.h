@@ -1,12 +1,5 @@
 #pragma once
 
-#include <wrl.h>
-#include <d3d12.h>
-
-#include <vector>
-#include <map>
-#include <memory>
-
 #include "cBufferTypes.h"
 
 using namespace std;
